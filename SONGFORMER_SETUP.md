@@ -11,8 +11,10 @@ git clone --recursive https://github.com/ASLP-lab/SongFormer.git vendor/SongForm
 python3.10 -m venv .venv-songformer
 source .venv-songformer/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r vendor/SongFormer/requirements.txt
+python -m pip install -r requirements-macos.txt
 ```
+
+File requirements-macos.txt mempertahankan pin upstream tetapi menghapus triton==3.0.0 yang tidak tersedia pada macOS. Tidak perlu membuat ulang venv jika instalasi sebelumnya berhenti pada Triton. Jalankan kembali pip dengan file ini. Perubahan ini memperbaiki blocker Triton; seluruh dependency dan inferensi di Mac belum terverifikasi.
 
 Python 3.10 mengikuti environment upstream. Jika belum tersedia, pasang Python 3.10 dahulu. Requirement upstream diuji penulis pada Ubuntu/CUDA; pemasangan di macOS bisa membutuhkan penyesuaian versi. Jika pip gagal, kirim error lengkap, jangan mengubah environment lain yang sudah bekerja. MuQ dan MusicFM serta head semuanya dibutuhkan.
 
