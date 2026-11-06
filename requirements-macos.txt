@@ -90,3 +90,6 @@ einops
 beartype
 blessed
 PyPDF2
+
+# Legacy jams imports pkg_resources at runtime.
+setuptools==80.9.0
