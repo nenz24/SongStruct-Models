@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import worker,{validateDocument} from '../worker/index.js';
 
 function database(){
- const db=new DatabaseSync(':memory:');db.exec(readFileSync('drizzle/0000_annotation.sql','utf8'));db.exec(readFileSync('drizzle/0001_access_codes.sql','utf8'));
+ const db=new DatabaseSync(':memory:');db.exec(readFileSync('drizzle/0000_annotation.sql','utf8'));db.exec(readFileSync('drizzle/0001_access_codes.sql','utf8'));db.exec(readFileSync('drizzle/0002_blocked_links.sql','utf8'));
  const api={prepare(sql){let args=[];const obj={bind(...v){args=v;return obj},async first(){return db.prepare(sql).get(...args)??null},async all(){return {results:db.prepare(sql).all(...args)}},async run(){const r=db.prepare(sql).run(...args);return {meta:{changes:Number(r.changes)}}}};return obj},async batch(statements){db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};
  return api;
 }
@@ -59,4 +59,21 @@ test('portable code access, per-person attribution, revocation and export protec
  const person=await (await call('/me',invite.code)).json();assert.equal(person.name,'Anotator 1');assert.equal(person.role,'annotator');
  assert.equal((await call('/export',invite.code)).status,403);
  await call('/revoke',env.ADMIN_ACCESS_CODE,{id:person.id});assert.equal((await call('/me',invite.code)).status,401);
+});
+
+test('managed Juan/Jordan/Otniel links, balanced allocation, uploader scope and durable revocation',async()=>{
+ const {env}=setup();env.INVITE_AUTH='1';env.ADMIN_ACCESS_CODE='a-long-admin-code-for-managed-team';env.TEAM_LINK_KEY='test-secret-at-least-32-characters-long';
+ async function call(path,token,body,method){return worker.fetch(new Request('https://studio.test/api'+path,{method:method||(body?'POST':'GET'),headers:{...(token?{authorization:'Bearer '+token}:{}),'x-requested-with':'SongStruct',origin:'https://studio.test'},body:body?JSON.stringify(body):undefined}),env)}
+ assert.equal((await call('/config')).status,200);
+ const sharing=await (await call('/share-links',env.ADMIN_ACCESS_CODE)).json();assert.deepEqual(sharing.links.map(m=>m.name),['Juan','Jordan','Otniel']);
+ const upload=sharing.upload_config.upload_code;assert.equal((await call('/export',upload)).status,403);assert.equal((await call('/tracks',upload)).status,403);
+ for(let i=0;i<7;i++)assert.equal((await call('/import',upload,{document:{...doc,track_id:'song'+i+'.mp3'},title:'Song '+i})).status,200);
+ const tracks=(await (await call('/tracks',env.ADMIN_ACCESS_CODE)).json()).tracks;
+ assert.deepEqual(['team_juan','team_jordan','team_otniel'].map(id=>tracks.filter(t=>t.assignee===id).length),[3,2,2]);
+ const one=tracks[0];assert.equal((await call('/tracks/'+one.id+'/save',upload,{version:one.version,edits:[]})).status,403);
+ const juanToken=new URL(sharing.links[0].url).hash.slice('#access='.length);
+ assert.equal((await (await call('/me',juanToken)).json()).name,'Juan');
+ await call('/revoke',env.ADMIN_ACCESS_CODE,{id:'team_juan'});await call('/config');assert.equal((await call('/me',juanToken)).status,401);
+ env.HOSTED_SITES='1';
+ const owner=await worker.fetch(new Request('https://studio.test/api/me',{headers:{'oai-authenticated-user-id':'owner-id','oai-authenticated-user-email':'owner@example.com'}}),env);assert.equal((await owner.json()).role,'admin');
 });

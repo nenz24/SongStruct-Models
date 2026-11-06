@@ -87,3 +87,23 @@ npm run build
 Pengujian mencakup batas akses, penugasan, konflik versi, review/approval, boundary tetap, label awal tidak hilang, ekspor, media ranges, kode per orang, dan pencabutan akses menggunakan adapter SQLite/R2 lokal. Pengujian browser end-to-end dan deploy pada akun Cloudflare Anda belum dilakukan. Schema migrations di `drizzle/` harus diaplikasikan sebelum menjalankan app.
 
 Sumber dan UI tidak menggunakan library eksternal/CDN. Jangan commit `wrangler.jsonc` milik akun pribadi, `.dev.vars`, `.env`, audio, kode akses, atau hasil anotasi ke GitHub.
+
+
+## Tim Juan, Jordan, dan Otniel; upload batch dari Mac
+
+Deployment Sites kini mendukung tautan undangan langsung, tanpa login untuk anotator. Pengelola tetap masuk dengan akun pemilik. Di runtime gunakan INVITE_AUTH=1, HOSTED_SITES=1, OWNER_EMAIL yang benar, dan TEAM_LINK_KEY sebagai secret acak. Jangan mengaktifkan HOSTED_SITES pada deployment Cloudflare mandiri karena header identitas pada host mandiri tidak diverifikasi oleh Sites.
+
+TEAM_LINK_KEY menghasilkan tautan stabil berbeda untuk Juan, Jordan, dan Otniel. Rahasiakan tautan; siapa pun yang memegangnya dapat bertindak sebagai anotator tersebut. Tautan disimpan hanya di sessionStorage tab, fragment dihapus dari address bar setelah diproses. Cabut melalui Tim & hasil jika diperlukan; revokasi bertahan setelah refresh. Mengganti TEAM_LINK_KEY mencabut kompatibilitas kode lama dan memerlukan pemutakhiran hash/konfigurasi, jadi jangan merotasinya sembarangan.
+
+Lagu baru otomatis ditugaskan ke anggota dengan jumlah tugas paling sedikit, urutan tie-break Juan → Jordan → Otniel. Hanya lagu pending yang belum punya assignee yang dialokasikan ulang; hasil submitted/approved atau pekerjaan orang lain tidak dipindahkan. Untuk 323 lagu baru, target jumlah adalah 108/108/107, bukan klaim seluruh file sudah ada di cloud.
+
+Pengelola: buka Tim & hasil → Hubungkan uploader dari Mac. Browser mengunduh songstruct-upload.local.json. Simpan di Downloads atau root repo Python, lalu jalankan dari root repo:
+
+```bash
+python3 upload_dataset.py --dry-run
+python3 upload_dataset.py
+```
+
+Skrip memakai DATASET_PATH dari check_dataset.py dan JSON dari outputs.local/labeled. Hanya pasangan yang sudah punya label SongFormer yang dikirim. File MP3 tidak dibaca oleh situs dari path lokal secara otomatis tanpa menjalankan skrip atau memilih folder browser. Kode uploader dibatasi untuk impor JSON, melihat metadata pasangan, dan mengirim audio; tidak dapat mengubah anotasi, membaca audio, mengekspor, atau mengundang anggota. Jangan bagikan file konfigurasi uploader.
+
+Run ulang melewati audio cloud yang sudah lengkap; boundary dan prediksi awal diverifikasi sebelum upload audio. Jika cloud berbeda dari lokal, file dilewati dengan error. Koreksi teman tidak ditimpa. Upload berlangsung berurutan dan dapat dilanjutkan setelah koneksi terputus. Daftar upload tidak sama dengan jumlah MP3 jika proses SongFormer belum selesai untuk seluruh lagu.
