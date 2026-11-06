@@ -35,7 +35,29 @@ sw_vers -productVersion
 xcodebuild -version
 ```
 
-Versi macOS dan SDK perlu diperiksa sebelum implementasi ekspor Music Understanding. Skrip ini tidak menjalankan framework Apple, SongFormer, atau training.
+## Ekspor boundary Apple di Mac
+
+Setelah mengisi DATASET_PATH di check_dataset.py, jalankan:
+
+```bash
+python3 export_apple_boundaries.py
+```
+
+Default memproses 5 MP3 pertama secara alfabetis. Exporter Python mengompilasi kode Swift menggunakan Xcode aktif, lalu menjalankan analisis .structure satu lagu per proses iterasi. Tidak ada paket pip tambahan.
+
+Output: outputs.local/apple/<path-relatif-audio>.json. Setiap file menyimpan sections, segments, phrases dalam detik, hasil mentah Apple, durasi, dan status pending. Boundary tidak di-snap, digabung, atau dilebur. Label SongFormer belum ditambahkan. Jangan anggap boundary ini sebagai ground truth sebelum review manual.
+
+File output yang sudah ada dilewati, sehingga bisa melanjutkan batch setelah kegagalan. Untuk mengulang sebuah lagu, pindahkan/hapus file outputnya terlebih dahulu. Jangan gunakan output lama setelah audio sumber diubah.
+
+Setelah pilot diperiksa, seluruh dataset dapat diproses dengan:
+
+```bash
+python3 export_apple_boundaries.py --limit 0
+```
+
+Butuh macOS/SDK yang menyediakan MusicUnderstanding. Versi Xcode saja belum membuktikan framework berhasil dikompilasi atau dijalankan; jika ada error, kirim log kompilasi/runtime. Wrapper Python telah diuji sintaks/CLI di Linux; exporter Swift belum dapat diuji di Mac pada lingkungan pengembangan ini.
+
+Skrip ini belum menjalankan SongFormer atau training.
 
 ## Tahap berikutnya
 
