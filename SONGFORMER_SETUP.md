@@ -8,15 +8,26 @@ Dari root repositori SongStruct-Models:
 
 ```bash
 git clone --recursive https://github.com/ASLP-lab/SongFormer.git vendor/SongFormer
-python3.10 -m venv .venv-songformer
-source .venv-songformer/bin/activate
+python3.11 -m venv .venv-songformer311
+source .venv-songformer311/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements-macos.txt
 ```
 
-File requirements-macos.txt mempertahankan pin upstream tetapi menghapus triton==3.0.0 yang tidak tersedia pada macOS. Tidak perlu membuat ulang venv jika instalasi sebelumnya berhenti pada Triton. Jalankan kembali pip dengan file ini. Perubahan ini memperbaiki blocker Triton; seluruh dependency dan inferensi di Mac belum terverifikasi.
+Gunakan Python 3.11 dengan NumPy 1.26.4 dan SciPy 1.17.1. Versi SciPy lama gagal memuat binary PROPACK pada Mac pengguna (error __DATA/__thread_bss); SciPy baru menggunakan implementasi PROPACK C. Triton juga dihapus karena tidak tersedia pada macOS. Ini penyesuaian dependency, bukan perubahan checkpoint.
 
-Python 3.10 mengikuti environment upstream. Jika belum tersedia, pasang Python 3.10 dahulu. Requirement upstream diuji penulis pada Ubuntu/CUDA; pemasangan di macOS bisa membutuhkan penyesuaian versi. Jika pip gagal, kirim error lengkap, jangan mengubah environment lain yang sudah bekerja. MuQ dan MusicFM serta head semuanya dibutuhkan.
+Jika sudah punya environment Python 3.10, jalankan deactivate dahulu, lalu buat environment baru .venv-songformer311. Environment lama tidak perlu dihapus. Jika python3.11 belum tersedia dan Anda menggunakan Homebrew: brew install python@3.11.
+
+Uji sebelum memuat model:
+
+```bash
+python -m pip check
+python -c "import numpy, scipy; import scipy.sparse.linalg; import sklearn; from muq import MuQ; print(numpy.__version__, scipy.__version__); print('Import berhasil')"
+```
+
+Kombinasi versi ini mengikuti persyaratan SciPy 1.17 (Python >=3.11, NumPy >=1.26.4); inferensi penuh SongFormer di Mac belum terverifikasi. Jika instalasi atau import gagal, kirim log sebelum melanjutkan. Jangan gunakan requirements upstream yang akan memasang kembali SciPy lama.
+
+Checkpoint yang sudah ada di vendor/SongFormer/src/SongFormer/ckpts tetap digunakan. Tidak perlu mengunduhnya lagi.
 
 Download checkpoint resmi:
 
