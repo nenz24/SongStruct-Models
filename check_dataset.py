@@ -5,16 +5,19 @@ import json
 from pathlib import Path
 import sys
 
+# Ubah ke path absolut folder audio Anda; boleh di luar repositori.
+DATASET_PATH = Path("/path/absolut/Dataset-Automation/dataset_mp3")
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--dataset", type=Path, default=DATASET_PATH, help="Opsional: mengganti DATASET_PATH di file ini.")
     parser.add_argument("--manifest", type=Path, help="Write a JSON audio inventory to a NEW file.")
     args = parser.parse_args()
     root = args.dataset.expanduser().resolve()
     print(f"Folder kerja: {Path.cwd()}", flush=True)
     print(f"Dataset: {root}", flush=True)
     if not root.is_dir():
-        parser.error("Folder dataset tidak ditemukan. Gunakan path absolut pada komputer ini.")
+        parser.error("Folder dataset tidak ditemukan. Edit DATASET_PATH di check_dataset.py ke path absolut folder audio Anda.")
     try:
         files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".mp3")
         records = [{"id": p.relative_to(root).as_posix(), "audio_path": str(p),
