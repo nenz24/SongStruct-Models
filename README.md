@@ -4,6 +4,14 @@ Tahap awal pipeline anotasi Apple Music Understanding → label SongFormer → k
 
 ## Jalankan di terminal VSCode
 
+Edit `DATASET_PATH` di bagian atas `check_dataset.py` ke path absolut folder audio Anda. Setelah itu cukup jalankan:
+
+```bash
+python3 check_dataset.py
+```
+
+Path contoh di skrip harus diganti sebelum digunakan. Argumen `--dataset` di bawah tetap tersedia sebagai override opsional.
+
 Butuh Python 3.9 atau lebih baru. Skrip pemeriksaan ini tidak membutuhkan instalasi paket.
 
 ```bash
