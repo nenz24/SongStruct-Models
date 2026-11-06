@@ -53,6 +53,7 @@ test('portable code access, per-person attribution, revocation and export protec
  const {env}=setup();env.INVITE_AUTH='1';env.ADMIN_ACCESS_CODE='a-very-long-random-admin-code-for-test';
  async function call(path,token,body){return worker.fetch(new Request('https://studio.test/api'+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'x-requested-with':'SongStruct',origin:'https://studio.test'},body:body?JSON.stringify(body):undefined}),env)}
  assert.equal((await call('/me','incorrect-token-should-be-denied')).status,401);
+ const spoofed=await worker.fetch(new Request('https://studio.test/api/me',{headers:{'oai-authenticated-user-id':'owner','oai-authenticated-user-email':'forged@example.com'}}),env);assert.equal(spoofed.status,401);
  const owner=await (await call('/me',env.ADMIN_ACCESS_CODE)).json();assert.equal(owner.role,'admin');
  const invite=await (await call('/codes',env.ADMIN_ACCESS_CODE,{name:'Anotator 1'})).json();assert.ok(invite.code.length>30);
  const person=await (await call('/me',invite.code)).json();assert.equal(person.name,'Anotator 1');assert.equal(person.role,'annotator');
