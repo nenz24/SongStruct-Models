@@ -1,0 +1,1 @@
+CREATE TABLE access_codes (hash TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL);

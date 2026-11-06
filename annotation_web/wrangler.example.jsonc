@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "songstruct-annotation-studio",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": true,
+  "vars": {"INVITE_AUTH": "1"},
+  "d1_databases": [{"binding": "DB", "database_name": "songstruct-annotations", "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID", "migrations_dir": "drizzle"}],
+  "r2_buckets": [{"binding": "BUCKET", "bucket_name": "songstruct-audio"}]
+}
