@@ -48,7 +48,7 @@ npx wrangler deploy
 
 Di **Unggah lagu**, pilih file atau folder JSON dari `outputs.local/labeled/`, dan file/folder audio dari `DATASET_PATH`. Browser hanya membaca file yang Anda pilih. Tidak mengunggah checkpoint atau folder lain.
 
-Upload pertama coba satu lagu. MP3 dipasangkan melalui `track_id`/nama file; file tidak boleh diubah panjangnya sejak analisis. Jika ada nama sama, unggah pasangan yang ambigu secara terpisah. JSON maksimal 2 MB, audio maksimal 90 MB per lagu. Audio yang sudah tersedia dan anotasi yang sudah ada tidak ditimpa otomatis. Unggah gagal dapat diulang; lagu tanpa audio ditandai. Path absolut lokal dan hasil Apple mentah tidak dibagikan ke anggota.
+Upload pertama coba satu lagu. MP3 dipasangkan melalui `track_id`/nama file; file tidak boleh diubah panjangnya sejak analisis. Jika ada nama sama, unggah pasangan yang ambigu secara terpisah. JSON lokal sampai 128 MiB dibaca dan diringkas otomatis: hasil mentah Apple/raw_result tidak dikirim. Payload anotasi ke server tetap maksimal 2 MB; audio maksimal 90 MB per lagu. Audio yang sudah tersedia dan anotasi yang sudah ada tidak ditimpa otomatis. Unggah gagal dapat diulang; lagu tanpa audio ditandai. Path absolut lokal dan hasil Apple mentah tidak dibagikan ke anggota.
 
 Untuk mode kode, audio diunduh ke memori browser saat lagu dibuka (hingga 90 MB), kemudian dapat di-seek per section. Pada mode Sites, pemutaran menggunakan HTTP Range. Audio tidak dimasukkan ke repository GitHub.
 
@@ -109,8 +109,6 @@ Skrip memakai DATASET_PATH dari check_dataset.py dan JSON dari outputs.local/lab
 Run ulang melewati audio cloud yang sudah lengkap; boundary dan prediksi awal diverifikasi sebelum upload audio. Jika cloud berbeda dari lokal, file dilewati dengan error. Koreksi teman tidak ditimpa. Upload berlangsung berurutan dan dapat dilanjutkan setelah koneksi terputus. Daftar upload tidak sama dengan jumlah MP3 jika proses SongFormer belum selesai untuk seluruh lagu.
 
 
-## Privasi per anotator dan penerimaan hasil
+## JSON sumber besar
 
-Setiap tautan Juan/Jordan/Otniel memakai identitas anotator berbeda. API memfilter daftar lagu menurut assignee dan menolak akses detail, audio, claim, serta perubahan lagu orang lain. Statistik anotator hanya menghitung lagu sendiri. Pengelola tetap dapat melihat seluruh koleksi dan memindahkan penugasan.
-
-Simpan draf menyimpan perubahan di database cloud tetapi belum mengirimkannya untuk review. Kirim untuk review mengubah status menjadi submitted dan menampilkan hasil dalam menu Review masuk pengelola. Tidak ada email otomatis atau kiriman file terpisah. Pengelola dapat mengembalikan atau menyetujui; Ekspor disetujui mengunduh JSON ke komputer pengelola, kemudian import_cloud_annotations.py memulihkan format per lagu.
+Batas 2 MB berlaku untuk payload anotasi jaringan, bukan ukuran JSON mentah Apple di disk. Uploader Python dan browser mengambil hanya metadata model, track ID, durasi, serta sections (boundary, label awal/manual, skor). File asli dan raw_result di Mac tetap utuh. Setelah pembaruan uploader, ulangi dry-run dan upload untuk file yang sebelumnya ditolak. Tidak perlu menjalankan ulang model.

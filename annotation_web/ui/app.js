@@ -12,6 +12,13 @@ let accessCode=sessionStorage.getItem('songstruct-code')||'';
 const invitation=new URLSearchParams(location.hash.slice(1)).get('access');
 if(invitation){accessCode=invitation;sessionStorage.setItem('songstruct-code',accessCode);history.replaceState(null,'',location.pathname+location.search);}
 const authHeaders=()=>accessCode?{authorization:'Bearer '+accessCode}:{};
+function compactDocument(doc){
+  const out={};
+  for(const k of ['schema_version','track_id','duration','boundary_source','label_source','encoder_window_seconds','songformer_revision','apple_json_sha256'])if(k in doc)out[k]=doc[k];
+  if(!Array.isArray(doc.sections))throw new Error('JSON tidak memiliki sections.');
+  out.sections=doc.sections.map(s=>{const item={};for(const k of ['id','start','end','label_initial','label_manual','label_scores','needs_review','coverage_fraction'])if(k in s)item[k]=s[k];item.label_initial=s.label_initial??s.label;return item;});
+  return out;
+}
 async function api(path,body,method='POST'){
   const opts=body===undefined?{headers:authHeaders()}:{method,headers:{...authHeaders(),'content-type':'application/json','x-requested-with':'SongStruct'},body:JSON.stringify(body)};
   const res=await fetch('/api'+path,opts);
@@ -139,7 +146,7 @@ $('#upload-run').onclick=async()=>{
     const f=jsonFiles[i];
     try{
       log.textContent+=`\n[${i+1}/${jsonFiles.length}] ${f.name}`;log.scrollTop=log.scrollHeight;
-      if(f.size>2_000_000)throw new Error('JSON maksimal 2 MB.');
+      if(f.size>128*1024*1024)throw new Error('JSON lokal maksimal 128 MiB per lagu.');
       const document=JSON.parse(await f.text());
       const filename=String(document.track_id||document.audio_path||'').split(/[\\/]/).pop();
       const exact=audioFiles.filter(a=>document.track_id&&a.webkitRelativePath&&a.webkitRelativePath.endsWith('/'+document.track_id));
@@ -147,7 +154,9 @@ $('#upload-run').onclick=async()=>{
       if(candidates.length!==1)throw new Error(candidates.length?'Ada beberapa MP3 dengan nama sama. Unggah pasangan ini secara terpisah.':`MP3 pasangan tidak ditemukan: ${filename||'track_id kosong'}`);
       const audioFile=candidates[0];
       if(audioFile.size>90*1024*1024)throw new Error('MP3 melebihi batas 90 MB.');
-      const result=await api('/import',{document,title:audioFile.name.replace(/\.mp3$/i,'')});
+      const payload={document:compactDocument(document),title:audioFile.name.replace(/\.mp3$/i,'')};
+      if(new TextEncoder().encode(JSON.stringify(payload)).length>2_000_000)throw new Error('Payload sections setelah diringkas masih melebihi 2 MB.');
+      const result=await api('/import',payload);
       const existing=await api('/tracks/'+result.id);
       if(existing.audio_ready){log.textContent+=' — sudah tersedia, dilewati.';continue}
       const res=await fetch('/api/tracks/'+result.id+'/audio',{method:'PUT',headers:{...authHeaders(),'content-type':'audio/mpeg','x-requested-with':'SongStruct'},body:audioFile});

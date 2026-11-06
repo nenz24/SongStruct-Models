@@ -34,7 +34,9 @@ class Client:
         headers = {'Authorization': 'Bearer ' + self.token, 'X-Requested-With': 'SongStruct',
                    'Origin': self.origin, 'Accept': 'application/json', 'User-Agent': 'SongStructUploader/1.0'}
         method = 'PUT' if audio else 'POST' if data is not None else 'GET'
-        encoded = json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8') if data is not None else None
+        encoded = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8') if data is not None else None
+        if encoded is not None and len(encoded) > 2_000_000:
+            raise ValueError('Payload anotasi setelah diringkas masih melebihi 2 MB; periksa isi sections.')
         if encoded is not None:
             headers.update({'Content-Type': 'application/json', 'Content-Length': str(len(encoded))})
         if audio:
@@ -71,6 +73,19 @@ class Client:
                     handle.close()
 
 
+def compact_document(doc):
+    """Exclude raw Apple analysis and local paths from the upload, not local files."""
+    fields = ('schema_version', 'track_id', 'duration', 'boundary_source', 'label_source',
+              'encoder_window_seconds', 'songformer_revision', 'apple_json_sha256')
+    section_fields = ('id', 'start', 'end', 'label_initial', 'label_manual', 'label_scores',
+                      'needs_review', 'coverage_fraction')
+    result = {k: doc[k] for k in fields if k in doc}
+    result['sections'] = [{**{k: section[k] for k in section_fields if k in section},
+                           'label_initial': section.get('label_initial', section.get('label'))}
+                          for section in doc['sections']]
+    return result
+
+
 def plan_uploads(dataset, labeled):
     dataset = dataset.expanduser().resolve()
     if not dataset.is_dir():
@@ -78,8 +93,8 @@ def plan_uploads(dataset, labeled):
     items, errors, seen = [], [], set()
     for file in sorted(labeled.rglob('*.json')):
         try:
-            if file.stat().st_size > 2_000_000:
-                raise ValueError('JSON melebihi 2 MB.')
+            if file.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError('JSON lokal melebihi 128 MiB; periksa apakah ini file hasil per lagu.')
             doc = json.loads(file.read_text(encoding='utf-8'))
             if doc.get('label_source') != 'ASLP-lab/SongFormer' or not doc.get('sections'):
                 raise ValueError('Belum ada label SongFormer. Gunakan outputs.local/labeled, bukan outputs.local/apple.')
@@ -101,7 +116,11 @@ def plan_uploads(dataset, labeled):
                 raise ValueError('MP3 pasangan tidak ditemukan.')
             if not 0 < audio.stat().st_size <= 90 * 1024 * 1024:
                 raise ValueError('MP3 harus berukuran 1 byte sampai 90 MB.')
-            items.append((file, doc, audio))
+            compact = compact_document(doc)
+            payload = {'document': compact, 'title': audio.stem}
+            if len(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')) > 2_000_000:
+                raise ValueError('Payload sections setelah diringkas masih melebihi 2 MB.')
+            items.append((file, compact, audio))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append((str(file), str(exc)))
     return items, errors
@@ -186,6 +205,9 @@ def main():
 if __name__ == '__main__':
     try:
         sys.exit(main())
+    except KeyboardInterrupt:
+        print('\nUpload dihentikan. Jalankan ulang untuk melanjutkan; hasil cloud yang sudah lengkap dilewati.')
+        sys.exit(130)
     except (ValueError, OSError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         sys.exit(1)
