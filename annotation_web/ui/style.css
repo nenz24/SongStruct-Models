@@ -3,3 +3,5 @@
 #new-code{overflow-wrap:anywhere;user-select:all}.team-member{flex-wrap:wrap}
 
 #share-panel{margin-top:25px;border-top:1px solid var(--line);padding-top:10px}.share-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:11px}.share-row span{margin-left:auto;color:var(--muted)}
+
+#nav-library-label{font-size:12px}.filters{flex-wrap:wrap}

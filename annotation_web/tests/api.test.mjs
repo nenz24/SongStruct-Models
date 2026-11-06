@@ -28,9 +28,10 @@ test('collaboration, claim conflict, locked boundaries, review, export and media
  assert.equal((await req('/import',{method:'POST',body:{document:doc}})).status,200);
  await req('/users',{method:'POST',body:{name:'Alice',email:'alice@example.com'}});
  await req('/users',{method:'POST',body:{name:'Bob',email:'bob@example.com'}});
- let r=await req('/tracks/'+id+'/claim',{method:'POST',user:'alice',body:{version:0}});assert.equal(r.status,200);let track=await r.json();
- assert.equal((await req('/tracks/'+id+'/claim',{method:'POST',user:'bob',body:{version:0}})).status,409);
- assert.equal((await req('/tracks/'+id+'/save',{method:'POST',user:'bob',body:{version:1,edits:[]}})).status,403);
+ await req('/me',{user:'alice'});
+ let r=await req('/tracks/'+id+'/assign',{method:'POST',body:{version:0,assignee:'alice'}});assert.equal(r.status,200);let track=await r.json();
+ assert.equal((await req('/tracks/'+id+'/claim',{method:'POST',user:'bob',body:{version:0}})).status,404);
+ assert.equal((await req('/tracks/'+id+'/save',{method:'POST',user:'bob',body:{version:1,edits:[]}})).status,404);
  const edits=[{label_manual:'verse',note:'Sudah benar'},{label_manual:'bridge',note:'Koreksi chorus ke bridge'}];
  r=await req('/tracks/'+id+'/save',{method:'POST',user:'alice',body:{version:1,edits,submit:true}});assert.equal(r.status,200);track=await r.json();assert.equal(track.status,'submitted');
  assert.equal((await req('/tracks/'+id+'/save',{method:'POST',user:'alice',body:{version:2,edits}})).status,409);
@@ -73,6 +74,15 @@ test('managed Juan/Jordan/Otniel links, balanced allocation, uploader scope and 
  const one=tracks[0];assert.equal((await call('/tracks/'+one.id+'/save',upload,{version:one.version,edits:[]})).status,403);
  const juanToken=new URL(sharing.links[0].url).hash.slice('#access='.length);
  assert.equal((await (await call('/me',juanToken)).json()).name,'Juan');
+ const mine=await (await call('/tracks',juanToken)).json();assert.equal(mine.tracks.length,3);assert.equal(mine.users.length,1);assert.ok(mine.tracks.every(t=>t.assignee==='team_juan'));
+ const other=tracks.find(t=>t.assignee==='team_jordan');
+ assert.equal((await call('/tracks/'+other.id,juanToken)).status,404);
+ assert.equal((await call('/tracks/'+other.id+'/audio',juanToken)).status,404);
+ assert.equal((await call('/tracks/'+other.id+'/save',juanToken,{version:other.version,edits:[]})).status,404);
+ assert.equal((await call('/tracks/'+other.id+'/claim',juanToken,{version:other.version})).status,404);
+ const own=mine.tracks[0];assert.equal((await call('/tracks/'+own.id,juanToken)).status,200);
+ assert.equal((await call('/tracks/'+other.id,env.ADMIN_ACCESS_CODE)).status,200);
+
  await call('/revoke',env.ADMIN_ACCESS_CODE,{id:'team_juan'});await call('/config');assert.equal((await call('/me',juanToken)).status,401);
  env.HOSTED_SITES='1';
  const owner=await worker.fetch(new Request('https://studio.test/api/me',{headers:{'oai-authenticated-user-id':'owner-id','oai-authenticated-user-email':'owner@example.com'}}),env);assert.equal((await owner.json()).role,'admin');

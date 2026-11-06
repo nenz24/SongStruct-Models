@@ -102,6 +102,9 @@ async function user(request,env){
 }
 const admin=u=>{if(u.role!=='admin')fail(403,'Hanya pengelola yang dapat melakukan ini.')};
 async function getRow(db,id){const r=await query(db,'SELECT * FROM tracks WHERE id=?',id).first();if(!r)fail(404,'Lagu tidak ditemukan.');return r;}
+function requireTrackAccess(row,u){
+  if(u.role==='annotator'&&row.assignee!==u.id)fail(404,'Lagu tidak ditemukan atau bukan bagian Anda.');
+}
 async function mutation(db,row,u,action,values){
   const statements=[query(db,'UPDATE tracks SET edits=?,status=?,assignee=?,version=version+1,updated=? WHERE id=? AND version=?',
     JSON.stringify(values.edits),values.status,values.assignee,stamp(),row.id,row.version),
@@ -114,11 +117,11 @@ async function mutation(db,row,u,action,values){
 
 async function handler(request,env){
   const url=new URL(request.url),path=url.pathname;
-  if(request.method==='GET'&&['/','/style.css','/app.js'].includes(path)){
-    const asset=ASSETS[path==='/'?'html':path==='/style.css'?'css':'js'];
+  if(request.method==='GET'&&['/','/style.css','/app.js','/upload_dataset.py'].includes(path)){
+    const asset=ASSETS[path==='/'?'html':path==='/style.css'?'css':path==='/upload_dataset.py'?'uploader':'js'];
     return new Response(asset.body,{headers:{'content-type':asset.type,'cache-control':'no-cache',
       'content-security-policy':"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-      'x-content-type-options':'nosniff','referrer-policy':'no-referrer'}});
+      'x-content-type-options':'nosniff','referrer-policy':'no-referrer',...(path==='/upload_dataset.py'?{'content-disposition':'attachment; filename="upload_dataset.py"'}:{})}});
   }
   if(!path.startsWith('/api/'))fail(404,'Tidak ditemukan.');
   if(path==='/api/config'&&request.method==='GET'){
@@ -140,8 +143,9 @@ async function handler(request,env){
       return json({links,upload_config:{app_url:url.origin,upload_code:await teamCode(env,'service_upload')}});
     }
     if(path==='/api/tracks'){
-      const [rows,users,invites]=await Promise.all([env.DB.prepare('SELECT * FROM tracks ORDER BY title').all(),
-        env.DB.prepare("SELECT id,name,email,role FROM users WHERE role!='uploader' ORDER BY name").all(),
+      const [rows,users,invites]=await Promise.all([
+        u.role==='admin'?env.DB.prepare('SELECT * FROM tracks ORDER BY title').all():query(env.DB,'SELECT * FROM tracks WHERE assignee=? ORDER BY title',u.id).all(),
+        u.role==='admin'?env.DB.prepare("SELECT id,name,email,role FROM users WHERE role!='uploader' ORDER BY name").all():query(env.DB,'SELECT id,name,role FROM users WHERE id=?',u.id).all(),
         u.role==='admin'?env.DB.prepare('SELECT email,name FROM invites ORDER BY name').all():Promise.resolve({results:[]})]);
       return json({labels:LABELS,users:users.results,invites:invites.results,tracks:rows.results.map(r=>{
         const t=track(r); t.total=t.sections.length;t.checked=t.sections.filter(s=>s.label_manual!==null).length;delete t.sections;return t;
@@ -163,6 +167,7 @@ async function handler(request,env){
     const match=path.match(/^\/api\/tracks\/([a-f0-9-]+)(\/audio)?$/);
     if(match){
       const row=await getRow(env.DB,match[1]);
+      requireTrackAccess(row,u);
       if(!match[2])return json(track(row));
       if(!row.audio_key)fail(404,'Audio belum diunggah oleh pengelola.');
       const object=await env.BUCKET.get(row.audio_key, {range:request.headers});
@@ -227,6 +232,7 @@ async function handler(request,env){
   const match=path.match(/^\/api\/tracks\/([a-f0-9-]+)\/(claim|assign|save|approve|reopen)$/);
   if(!match)fail(404,'Tidak ditemukan.');
   const row=await getRow(env.DB,match[1]),action=match[2];
+  requireTrackAccess(row,u);
   if(data.version!==row.version)fail(409,'Lagu diubah anotator lain. Muat ulang lagu sebelum menyimpan.');
   let edits=JSON.parse(row.edits),status=row.status,assignee=row.assignee;
   if(action==='claim'){

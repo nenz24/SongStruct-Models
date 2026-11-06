@@ -107,3 +107,10 @@ python3 upload_dataset.py
 Skrip memakai DATASET_PATH dari check_dataset.py dan JSON dari outputs.local/labeled. Hanya pasangan yang sudah punya label SongFormer yang dikirim. File MP3 tidak dibaca oleh situs dari path lokal secara otomatis tanpa menjalankan skrip atau memilih folder browser. Kode uploader dibatasi untuk impor JSON, melihat metadata pasangan, dan mengirim audio; tidak dapat mengubah anotasi, membaca audio, mengekspor, atau mengundang anggota. Jangan bagikan file konfigurasi uploader.
 
 Run ulang melewati audio cloud yang sudah lengkap; boundary dan prediksi awal diverifikasi sebelum upload audio. Jika cloud berbeda dari lokal, file dilewati dengan error. Koreksi teman tidak ditimpa. Upload berlangsung berurutan dan dapat dilanjutkan setelah koneksi terputus. Daftar upload tidak sama dengan jumlah MP3 jika proses SongFormer belum selesai untuk seluruh lagu.
+
+
+## Privasi per anotator dan penerimaan hasil
+
+Setiap tautan Juan/Jordan/Otniel memakai identitas anotator berbeda. API memfilter daftar lagu menurut assignee dan menolak akses detail, audio, claim, serta perubahan lagu orang lain. Statistik anotator hanya menghitung lagu sendiri. Pengelola tetap dapat melihat seluruh koleksi dan memindahkan penugasan.
+
+Simpan draf menyimpan perubahan di database cloud tetapi belum mengirimkannya untuk review. Kirim untuk review mengubah status menjadi submitted dan menampilkan hasil dalam menu Review masuk pengelola. Tidak ada email otomatis atau kiriman file terpisah. Pengelola dapat mengembalikan atau menyetujui; Ekspor disetujui mengunduh JSON ke komputer pengelola, kemudian import_cloud_annotations.py memulihkan format per lagu.
