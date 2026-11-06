@@ -9,3 +9,6 @@ checkpoints/
 
 .build/
 outputs.local/
+
+vendor/
+.venv-songformer/
