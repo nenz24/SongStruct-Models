@@ -69,3 +69,16 @@ Skrip ini belum menjalankan SongFormer atau training.
 6. Evaluasi sebelum dan sesudah ekspor Core ML dan palettization 6-bit.
 
 Jangan commit audio, checkpoint, path lokal, atau kredensial ke repositori publik.
+
+
+## Aplikasi anotasi bersama
+
+Aplikasi web cloud tersedia di [annotation_web/README.md](annotation_web/README.md). Versi GitHub + Cloudflare memakai kode akses berbeda per anotator; tidak membutuhkan akun ChatGPT untuk teman. Fitur: unggah folder JSON berlabel dan MP3, pemutaran per section, boundary terkunci, koreksi label, penugasan, simpan draf, kirim review, persetujuan, dan ekspor JSON bersama. Tidak ada audio/checkpoint/kredensial di repository.
+
+Setelah deploy mengikuti panduan aplikasi dan mengekspor hasil approved, pulihkan ke format lokal:
+
+```bash
+python import_cloud_annotations.py /path/songstruct-approved.json
+```
+
+Skrip mencocokkan track ID dan boundary dengan JSON lokal, lalu menyimpan ke outputs.local/reviewed tanpa menimpa sumber atau output lama. Source aplikasi tersedia; deployment ke akun Cloudflare Anda dan pengujian browser tim masih perlu dilakukan.
