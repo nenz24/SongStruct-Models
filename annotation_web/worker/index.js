@@ -40,9 +40,9 @@ function track(row){
 async function user(request,env){
   const OWNER=(env.OWNER_EMAIL??OWNER_DEFAULT).toLowerCase();
   const id=request.headers.get('oai-authenticated-user-id'),email=(request.headers.get('oai-authenticated-user-email')??'').toLowerCase();
-  // Optional portable deployment on YOUR Cloudflare account. Sites identity is
-  // preserved whenever platform identity headers are available.
-  if(!id&&env.INVITE_AUTH==='1'){
+  // On a portable public deployment, never trust client-supplied identity headers.
+  // Hosted Sites retains platform identity only when code mode is disabled.
+  if(env.INVITE_AUTH==='1'){
     const token=(request.headers.get('authorization')??'').replace(/^Bearer /,'');
     if(token.length<20||token.length>256)fail(401,'Masukkan kode akses dari pengelola.');
     const hash=await digest(token);
