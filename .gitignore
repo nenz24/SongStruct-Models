@@ -6,9 +6,8 @@ __pycache__/
 dataset_mp3/
 checkpoints/
 .env
-
 .build/
 outputs.local/
-
 vendor/
 .venv-songformer/
+.venv-songformer311/
