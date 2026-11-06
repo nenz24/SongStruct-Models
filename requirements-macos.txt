@@ -1,6 +1,7 @@
 # Adapted from ASLP-lab/SongFormer requirements.txt (blob 2c2199960576efbf84d2f0e3fa1a394dea2d3468).
 # macOS: omit explicit Triton dependency; use CPU/MPS instead of CUDA.
-# Remaining upstream pins retained; full macOS installation not yet verified.
+# Requires Python 3.11. NumPy/SciPy updated to avoid old PROPACK binaries.
+# Other upstream pins retained; full macOS inference not yet verified.
 # Core Deep Learning Framework
 torch==2.4.0
 torchaudio==2.4.0
@@ -15,8 +16,8 @@ huggingface-hub==0.30.1
 safetensors==0.5.3
 
 # Scientific Computing
-numpy==1.25.0
-scipy==1.15.2
+numpy==1.26.4
+scipy==1.17.1
 scikit-learn==1.6.1
 pandas==2.2.3
 
