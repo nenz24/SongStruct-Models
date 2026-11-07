@@ -47,7 +47,7 @@ def aggregate(sections, frames):
                                         or covered / (end - start) < 0.98)})
     return result
 
-def load_models(repo, device):
+def load_models(repo, device, checkpoint=None):
     import numpy as np
     import scipy
     scipy.inf = np.inf  # upstream msaf compatibility
@@ -61,7 +61,7 @@ def load_models(repo, device):
 
     model = Model(OmegaConf.load("configs/SongFormer.yaml"))
     ema = EMA(model, include_online_model=False)
-    ema.load_state_dict(load_file("ckpts/SongFormer.safetensors"))
+    ema.load_state_dict(load_file(str(checkpoint or "ckpts/SongFormer.safetensors")))
     model.load_state_dict(ema.ema_model.state_dict())
     muq = MuQ.from_pretrained("OpenMuQ/MuQ-large-msd-iter").to(device).eval()
     musicfm = MusicFM25Hz(is_flash=False, stat_path="ckpts/MusicFM/msd_stats.json",
@@ -122,7 +122,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=LIMIT)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default=DEVICE)
+    parser.add_argument("--checkpoint", type=Path, help="Optional trusted fine-tuned EMA safetensors checkpoint")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_PATH, help="Separate output directory for model comparisons")
     args = parser.parse_args()
+    output_path = args.output_dir.expanduser().resolve()
+    checkpoint = args.checkpoint.expanduser().resolve() if args.checkpoint else None
+    if checkpoint and (not checkpoint.is_file() or checkpoint.suffix != ".safetensors"):
+        parser.error("--checkpoint must be an existing EMA .safetensors file.")
     if args.limit < 0:
         parser.error("--limit must be >= 0")
     inputs = sorted(APPLE_PATH.rglob("*.json"))
@@ -130,7 +136,7 @@ def main():
         inputs = inputs[:args.limit]
     if not inputs:
         parser.error(f"No Apple JSON found in {APPLE_PATH}")
-    pending = [p for p in inputs if not (OUTPUT_PATH / p.relative_to(APPLE_PATH)).exists()]
+    pending = [p for p in inputs if not (output_path / p.relative_to(APPLE_PATH)).exists()]
     if not pending:
         print("Semua output label sudah tersedia. Tidak menimpa koreksi manual.")
         return 0
@@ -145,7 +151,9 @@ def main():
         import torch
         device = ("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device
         print(f"Loading pretrained models on {device}...", flush=True)
-        models = load_models(repo, device)
+        models = load_models(repo, device, checkpoint)
+        checkpoint_file = checkpoint or (repo / "src/SongFormer/ckpts/SongFormer.safetensors")
+        checkpoint_hash = hashlib.sha256(checkpoint_file.read_bytes()).hexdigest()
         try:
             revision = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
         except (OSError, subprocess.CalledProcessError):
@@ -163,9 +171,11 @@ def main():
                 output = {**document, "sections": labeled, "boundary_locked": True,
                           "label_source": "ASLP-lab/SongFormer", "songformer_revision": revision,
                           "encoder_window_seconds": ENCODER_WINDOW_SECONDS,
+                          "checkpoint_path": str(checkpoint_file),
+                          "checkpoint_sha256": checkpoint_hash,
                           "apple_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
                           "score_note": "Uncalibrated mean softmax scores; not guaranteed accuracy."}
-                dest = OUTPUT_PATH / path.relative_to(APPLE_PATH)
+                dest = output_path / path.relative_to(APPLE_PATH)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with dest.open("x", encoding="utf-8") as handle:
                     json.dump(output, handle, ensure_ascii=False, indent=2, allow_nan=False)

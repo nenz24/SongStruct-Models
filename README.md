@@ -82,3 +82,16 @@ python import_cloud_annotations.py /path/songstruct-approved.json
 ```
 
 Skrip mencocokkan track ID dan boundary dengan JSON lokal, lalu menyimpan ke outputs.local/reviewed tanpa menimpa sumber atau output lama. Source aplikasi tersedia; deployment ke akun Cloudflare Anda dan pengujian browser tim masih perlu dilakukan.
+
+
+## Pipeline fine-tuning worship
+
+Lihat [finetuning/README.md](finetuning/README.md) untuk persiapan inventaris, audit kelompok lagu, split tetap, cache fitur MuQ/MusicFM, training label head, dan evaluasi holdout. Pipeline hanya memakai label_manual yang sudah approved, mempertahankan boundary Apple, dan tidak mengubah database anotasi.
+
+Mulai dari persiapan ringan, tanpa memuat model atau menjalankan training:
+
+```bash
+python3 -m finetuning.prepare
+```
+
+Periksa outputs.local/finetuning/group_map.csv sebelum mengonfirmasi kelompok. Ekstraksi cache bisa ditunda dan membutuhkan ruang disk tambahan; pelabelan lama belum menyimpan fitur ini. Training model penuh belum dijalankan pada dataset pengguna. Pengujian CPU mencakup data/split, gradient dan freeze, loop training sintetis, serta checkpoint EMA round-trip.
