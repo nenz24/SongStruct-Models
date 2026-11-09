@@ -36,7 +36,7 @@ function notice(message,error=false){
 }
 function admin(){return state.me?.role==='admin'}
 function editable(){return state.track&&!['submitted','approved'].includes(state.track.status)&&(admin()||state.track.assignee===state.me.id)}
-function setDirty(){state.dirty=true;const el=$('#save-state');if(el){el.textContent='● Perubahan belum disimpan';el.classList.add('dirty')}updateChecked()}
+function setDirty(){state.dirty=true;if($('#approve-all'))$('#approve-all').disabled=true;const el=$('#save-state');if(el){el.textContent='● Perubahan belum disimpan';el.classList.add('dirty')}updateChecked()}
 function updateChecked(){if(!state.track)return;const count=state.track.sections.filter(s=>s.label_manual!==null).length;const el=$('#section-count');if(el)el.textContent=`${count} / ${state.track.sections.length} diperiksa`;}
 function resetAudio(){if(blobURL){URL.revokeObjectURL(blobURL);blobURL=null}if(audio){audio.pause();audio.removeAttribute('src');audio.load();audio=null}stopAt=null;state.section=-1;}
 async function refresh(){
@@ -44,6 +44,7 @@ async function refresh(){
   renderList();renderTeam();renderStats();
 }
 function renderStats(){
+  const pending=state.tracks.filter(t=>t.status==='submitted'&&t.checked===t.total);const bulk=$('#approve-all');bulk.textContent='✓ Setujui semua ('+pending.length+')';bulk.disabled=!admin()||!pending.length||state.busy||state.dirty;
   $('#review-count').textContent=state.tracks.filter(t=>t.status==='submitted').length;$('#nav-count').textContent=state.tracks.length;$('#stat-total').textContent=state.tracks.length;
   for(const key of ['in_progress','submitted','approved'])$('#stat-'+(key==='in_progress'?'progress':key)).textContent=state.tracks.filter(t=>t.status===key).length;
 }
@@ -136,6 +137,21 @@ $('#invite-form').onsubmit=async e=>{
 $('#code-form').onsubmit=async e=>{e.preventDefault();const form=e.target;const btn=form.querySelector('button');btn.disabled=true;try{const r=await api('/codes',{name:form.elements.name.value});const el=$('#new-code');el.classList.remove('hidden');el.textContent='Simpan kode untuk '+r.name+' (hanya ditampilkan sekali):\n'+r.code;form.reset();await refresh()}catch(error){notice(error.message,true)}finally{btn.disabled=false}};
 $('#code-login').onsubmit=async e=>{e.preventDefault();accessCode=e.target.elements.code.value.trim();try{state.me=await api('/me');sessionStorage.setItem('songstruct-code',accessCode);$('#auth-screen').classList.add('hidden');await boot()}catch(err){$('#code-error').textContent=err.message;accessCode=''}};
 $('#download-upload-config').onclick=async()=>{try{const data=await api('/share-links');const blob=new Blob([JSON.stringify(data.upload_config,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='songstruct-upload.local.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);notice('Konfigurasi diunduh. Jalankan python3 upload_dataset.py di Mac.')}catch(e){notice(e.message,true)}};
+$('#approve-all').onclick=async()=>{
+  if(!admin()||state.busy)return;
+  if(state.dirty){notice('Simpan draf yang sedang diedit terlebih dahulu.',true);return}
+  const snapshot=state.tracks.filter(t=>t.status==='submitted'&&t.checked===t.total).map(t=>({id:t.id,version:t.version}));
+  if(!snapshot.length)return;
+  state.busy=true;const button=$('#approve-all');button.disabled=true;button.textContent='Menyetujui…';
+  const selected=state.track?.id;
+  try{
+    const result=await api('/approve-all',{tracks:snapshot});
+    await refresh();
+    if(selected&&state.track?.id===selected&&!state.dirty&&snapshot.some(t=>t.id===selected)){const updated=await api('/tracks/'+selected);resetAudio();state.track=updated;renderEditor();}
+    notice(result.approved+' lagu disetujui.'+(result.skipped?' '+result.skipped+' lagu dilewati karena sudah berubah atau belum lengkap.':'')+' Catatan dan label tetap tersimpan.');
+  }catch(e){notice(e.message+' Muat ulang daftar untuk memeriksa status terbaru.',true);await refresh().catch(()=>{});}
+  finally{state.busy=false;renderStats();}
+};
 $('#upload-open').onclick=()=>$('#upload-dialog').showModal();
 $('#upload-run').onclick=async()=>{
   const jsonFiles=[...$('#json-files').files,...$('#json-folder').files].filter(f=>f.name.toLowerCase().endsWith('.json')),audioFiles=[...$('#audio-files').files,...$('#audio-folder').files].filter(f=>f.name.toLowerCase().endsWith('.mp3')),log=$('#upload-progress');

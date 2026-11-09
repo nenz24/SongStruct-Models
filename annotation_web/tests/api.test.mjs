@@ -87,3 +87,30 @@ test('managed Juan/Jordan/Otniel links, balanced allocation, uploader scope and 
  env.HOSTED_SITES='1';
  const owner=await worker.fetch(new Request('https://studio.test/api/me',{headers:{'oai-authenticated-user-id':'owner-id','oai-authenticated-user-email':'owner@example.com'}}),env);assert.equal((await owner.json()).role,'admin');
 });
+
+test('bulk approval is admin-only, version guarded, complete-only, idempotent and preserves notes',async()=>{
+ const {req,env}=setup();const ids=[];
+ for(let i=0;i<31;i++){
+   const imported=await (await req('/import',{method:'POST',body:{document:{...doc,track_id:'bulk-'+i+'.mp3'},title:'Bulk '+i}})).json();
+   ids.push(imported.id);
+   const saved=await req('/tracks/'+imported.id+'/save',{method:'POST',body:{version:0,edits:[{label_manual:'verse',note:'Catatan tetap ada'},{label_manual:'bridge',note:'Bridge worship'}],submit:true}});
+   assert.equal(saved.status,200);
+ }
+ const draft=await (await req('/import',{method:'POST',body:{document:{...doc,track_id:'draft.mp3'}}})).json();
+ const unrequested=await (await req('/import',{method:'POST',body:{document:{...doc,track_id:'newly-submitted.mp3'}}})).json();
+ await req('/tracks/'+unrequested.id+'/save',{method:'POST',body:{version:0,edits:[{label_manual:'verse',note:''},{label_manual:'chorus',note:''}],submit:true}});
+ await req('/tracks/'+ids[0]+'/approve',{method:'POST',body:{version:1}});
+ await req('/tracks/'+ids[1]+'/reopen',{method:'POST',body:{version:1}});
+ await env.DB.prepare('UPDATE tracks SET edits=? WHERE id=?').bind(JSON.stringify([{label_manual:'verse',note:''},{label_manual:null,note:''}]),ids[2]).run();
+ const snapshot=[...ids.map(id=>({id,version:1})),{id:draft.id,version:0}];
+ await req('/users',{method:'POST',body:{name:'Alice',email:'alice@example.com'}});
+ assert.equal((await req('/approve-all',{method:'POST',user:'alice',body:{tracks:snapshot}})).status,403);
+ const result=await req('/approve-all',{method:'POST',body:{tracks:snapshot}});assert.equal(result.status,200);
+ assert.deepEqual(await result.json(),{approved:28,skipped:4});
+ const unchanged=await (await req('/tracks/'+unrequested.id)).json();assert.equal(unchanged.status,'submitted');
+ assert.equal((await (await req('/tracks/'+draft.id)).json()).status,'pending');
+ const reviewed=await (await req('/tracks/'+ids[3])).json();assert.equal(reviewed.status,'approved');assert.equal(reviewed.sections[0].note,'Catatan tetap ada');assert.equal(reviewed.sections[1].label_manual,'bridge');
+ const events=await env.DB.prepare("SELECT * FROM events WHERE action='bulk_approve'").all();assert.equal(events.results.length,28);assert.ok(events.results.every(e=>e.user_id==='owner'));
+ assert.deepEqual(await (await req('/approve-all',{method:'POST',body:{tracks:snapshot}})).json(),{approved:0,skipped:32});
+ assert.equal((await req('/approve-all',{method:'POST',body:{tracks:[snapshot[0],snapshot[0]]}})).status,400);
+});

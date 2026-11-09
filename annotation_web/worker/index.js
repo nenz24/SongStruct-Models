@@ -199,6 +199,27 @@ async function handler(request,env){
   const text=await request.text();
   if(text.length>2_000_000)fail(413,'JSON terlalu besar.');
   let data;try{data=JSON.parse(text)}catch{fail(400,'JSON tidak valid.')}
+  if(path==='/api/approve-all'){
+    admin(u);
+    const requested=data.tracks;
+    if(!Array.isArray(requested)||requested.length>1000||requested.some(t=>!t||typeof t.id!=='string'||!Number.isInteger(t.version)||t.version<0)||new Set(requested.map(t=>t.id)).size!==requested.length)fail(400,'Daftar review tidak valid. Muat ulang halaman.');
+    let approved=0;
+    for(let offset=0;offset<requested.length;offset+=25){
+      const batch=requested.slice(offset,offset+25);
+      const rows=(await query(env.DB,`SELECT * FROM tracks WHERE id IN (${batch.map(()=>'?').join(',')})`,...batch.map(t=>t.id)).all()).results;
+      const expected=new Map(batch.map(t=>[t.id,t.version]));
+      const statements=[];
+      for(const row of rows){
+        if(row.status!=='submitted'||row.version!==expected.get(row.id))continue;
+        const sections=JSON.parse(row.original).sections,edits=JSON.parse(row.edits);
+        if(!sections.length||edits.length!==sections.length||edits.some(e=>!e||!LABELS.includes(e.label_manual)))continue;
+        statements.push(query(env.DB,"UPDATE tracks SET status='approved',version=version+1,updated=? WHERE id=? AND version=? AND status='submitted'",stamp(),row.id,row.version));
+        statements.push(query(env.DB,"INSERT INTO events(id,track_id,user_id,action,at,details) SELECT ?,?,?,?,?,? WHERE changes()=1",crypto.randomUUID(),row.id,u.id,'bulk_approve',stamp(),JSON.stringify({status:'approved',from_version:row.version})));
+      }
+      if(statements.length){const results=await env.DB.batch(statements);for(let i=0;i<results.length;i+=2)approved+=results[i].meta.changes;}
+    }
+    return json({approved,skipped:requested.length-approved});
+  }
   if(path==='/api/users'){
     admin(u);const email=String(data.email??'').trim().toLowerCase(),name=String(data.name??'').trim().slice(0,80);
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!name)fail(400,'Isi nama dan email yang valid.');
