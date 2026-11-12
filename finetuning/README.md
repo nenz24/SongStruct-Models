@@ -142,3 +142,12 @@ python3 -m unittest discover -s tests -p test_finetuning.py -v
 ```
 
 Unit/integration smoke tests memakai anotasi serta fitur sintetis dan model kecil: menolak anotasi belum approved/boundary berubah, split reproducible, gradient menuju label manual, hanya label head berubah saat dibekukan, loop training/validation/early stopping berjalan, dan round-trip checkpoint EMA safetensors identik. Tidak mengunduh bobot MuQ/MusicFM atau menjalankan fine-tuning model penuh di lingkungan pengembang; model penuh, data worship nyata, serta akselerasi Mac masih perlu pilot pada perangkat Anda.
+
+### Diagnostik waktu section
+
+`prepare` menulis `outputs.local/finetuning/validation_errors.json` dan menampilkan
+track serta section yang gagal, termasuk start/end, akhir section sebelumnya,
+durasi, overlap dan kelebihan durasi. Jika gagal, manifest dan split baru tidak
+ditulis. JSON anotasi asli tidak diubah. Selisih overlap maksimal 0.000001 detik
+diterima sebagai pembulatan floating point; rentang target tetap seperti sumber.
+Overlap lebih besar tetap memerlukan pemeriksaan, walaupun lolos impor web.

@@ -22,11 +22,18 @@ def validate_review(original, corrected, decisions=None):
     source, edited = original['sections'], corrected['sections']
     if len(source) != len(edited) or abs(float(original['duration']) - float(corrected['duration'])) > 0.001:
         raise ValueError('Approved annotation does not match source duration/sections.')
+    duration = float(original['duration'])
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError(f'Invalid duration: {duration!r}')
     previous, result = 0.0, []
     for index, (a, b) in enumerate(zip(source, edited), 1):
         start, end = a['start'], a['end']
-        if not (math.isfinite(start + end) and previous <= start < end <= original['duration'] + 0.001):
-            raise ValueError('Non-finite, overlapping or out-of-range sections.')
+        if not (math.isfinite(start + end) and previous - 1e-6 <= start < end <= duration + 0.001):
+            raise ValueError(
+                f'Section {index}: invalid time range; start={start!r}, end={end!r}, '
+                f'previous_end={previous!r}, duration={duration!r}. '
+                f'Overlap={max(0.0, previous - start):.9f}s; '
+                f'end_overrun={max(0.0, end - duration):.9f}s.')
         if (start, end) != (b['start'], b['end']) or a.get('label_initial', a.get('label')) != b.get('label_initial'):
             raise ValueError('Boundary/prediksi awal berubah dari source.')
         if b.get('label_manual') not in LABELS:
@@ -100,13 +107,25 @@ def main():
     reviewed = {}
     documents = read(args.export.expanduser())['tracks'] if args.export else [read(p) for p in Path(cfg['reviewed_dir']).rglob('*.json')]
     decisions, audit_stats = audit(documents, work)
+    validation_errors, seen = [], set()
     for doc in documents:
         key = doc.get('track_id')
         if doc.get('review_status') != 'approved':
             continue
-        if key not in originals or key in reviewed:
+        if key not in originals or key in seen:
             raise ValueError(f'Unknown/duplicate approved track: {key}')
-        reviewed[key] = validate_review(originals[key][0], doc, decisions)
+        seen.add(key)
+        try:
+            reviewed[key] = validate_review(originals[key][0], doc, decisions)
+        except (ValueError, TypeError, KeyError) as exc:
+            validation_errors.append({'track_id': key, 'error': str(exc)})
+    report = work / 'validation_errors.json'
+    write(report, validation_errors)
+    if validation_errors:
+        for failure in validation_errors:
+            print(f"INVALID: {failure['track_id']} — {failure['error']}")
+        raise ValueError(f'{len(validation_errors)} approved tracks failed validation. '
+                         f'See {report}. No new manifest or split plan was written.')
     records, hashes = [], {}
     for key, (doc, audio, source) in originals.items():
         digest = sha_file(audio)

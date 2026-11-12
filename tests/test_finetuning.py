@@ -17,6 +17,25 @@ except ImportError:
 
 
 class DataTests(unittest.TestCase):
+    def test_time_validation_roundoff_and_diagnostics(self):
+        import copy
+        source = {'duration': 20, 'sections': [
+            {'start': 0, 'end': 10.0000000001, 'label_initial': 'verse'},
+            {'start': 10, 'end': 20, 'label_initial': 'chorus'}]}
+        corrected = copy.deepcopy(source)
+        corrected['review_status'] = 'approved'
+        for section in corrected['sections']:
+            section['label_manual'] = section['label_initial']
+        self.assertEqual(len(validate_review(source, corrected)), 2)
+        for end, expected in [(10.1, 'Section 2'), (21, 'Section 1')]:
+            bad = copy.deepcopy(source)
+            bad['sections'][0]['end'] = end
+            with self.assertRaisesRegex(ValueError, expected):
+                bad_corrected = copy.deepcopy(corrected)
+                bad_corrected['sections'][0]['end'] = end
+                validate_review(bad, bad_corrected)
+
+
     def test_notes_are_held_until_reviewed_without_losing_clean_sections(self):
         import csv
         from finetuning.audit import audit
