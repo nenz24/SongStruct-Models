@@ -16,7 +16,7 @@ def group_suggestion(track_id):
     return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', name).casefold()).strip()
 
 
-def validate_review(original, corrected, decisions=None):
+def validate_review(original, corrected, decisions=None, adjustments=None):
     if corrected.get('review_status') != 'approved':
         return None
     source, edited = original['sections'], corrected['sections']
@@ -28,7 +28,12 @@ def validate_review(original, corrected, decisions=None):
     previous, result = 0.0, []
     for index, (a, b) in enumerate(zip(source, edited), 1):
         start, end = a['start'], a['end']
-        if not (math.isfinite(start + end) and previous - 1e-6 <= start < end <= duration + 0.001):
+        # Only the final endpoint may exceed declared duration by at most 20 ms.
+        # Keep source equality checks on raw times; clip only the training target.
+        tail_limit = 0.020 + 1e-9 if index == len(source) else 0.0
+        target_end = min(end, duration)
+        if not (math.isfinite(start + end) and previous - 1e-6 <= start < target_end
+                and end <= duration + tail_limit):
             raise ValueError(
                 f'Section {index}: invalid time range; start={start!r}, end={end!r}, '
                 f'previous_end={previous!r}, duration={duration!r}. '
@@ -38,8 +43,12 @@ def validate_review(original, corrected, decisions=None):
             raise ValueError('Boundary/prediksi awal berubah dari source.')
         if b.get('label_manual') not in LABELS:
             raise ValueError('Every approved section must have a valid manual label.')
+        if end > duration and adjustments is not None:
+            adjustments.append({'track_id': corrected.get('track_id', ''),
+                                'section_index': index, 'original_end': end,
+                                'training_end': target_end, 'trimmed_seconds': end - target_end})
         if allowed(corrected.get('track_id', ''), index, b, decisions or {}):
-            result.append({'start': start, 'end': end, 'label': b['label_manual']})
+            result.append({'start': start, 'end': target_end, 'label': b['label_manual']})
         previous = end
     return result
 
@@ -107,7 +116,7 @@ def main():
     reviewed = {}
     documents = read(args.export.expanduser())['tracks'] if args.export else [read(p) for p in Path(cfg['reviewed_dir']).rglob('*.json')]
     decisions, audit_stats = audit(documents, work)
-    validation_errors, seen = [], set()
+    validation_errors, time_adjustments, seen = [], [], set()
     for doc in documents:
         key = doc.get('track_id')
         if doc.get('review_status') != 'approved':
@@ -116,11 +125,14 @@ def main():
             raise ValueError(f'Unknown/duplicate approved track: {key}')
         seen.add(key)
         try:
-            reviewed[key] = validate_review(originals[key][0], doc, decisions)
+            reviewed[key] = validate_review(originals[key][0], doc, decisions, time_adjustments)
         except (ValueError, TypeError, KeyError) as exc:
             validation_errors.append({'track_id': key, 'error': str(exc)})
     report = work / 'validation_errors.json'
     write(report, validation_errors)
+    adjustment_report = work / 'time_adjustments.json'
+    write(adjustment_report, time_adjustments)
+    print(f'Penyesuaian akhir section <=20ms: {len(time_adjustments)}. Laporan: {adjustment_report}')
     if validation_errors:
         for failure in validation_errors:
             print(f"INVALID: {failure['track_id']} — {failure['error']}")

@@ -17,6 +17,33 @@ except ImportError:
 
 
 class DataTests(unittest.TestCase):
+    def test_final_tail_clip_only_and_source_immutable(self):
+        import copy
+        for overrun in (0.001333333, 0.011020833, 0.020):
+            source = {'duration': 20, 'sections': [
+                {'start': 0, 'end': 10, 'label_initial': 'verse'},
+                {'start': 10, 'end': 20 + overrun, 'label_initial': 'chorus'}]}
+            corrected = copy.deepcopy(source)
+            corrected['review_status'] = 'approved'
+            for section in corrected['sections']:
+                section['label_manual'] = section['label_initial']
+            before = copy.deepcopy((source, corrected))
+            adjustments = []
+            targets = validate_review(source, corrected, adjustments=adjustments)
+            self.assertEqual(targets[-1]['end'], 20)
+            self.assertEqual(len(adjustments), 1)
+            self.assertEqual((source, corrected), before)
+            source['sections'][-1]['end'] = 20.021
+            corrected['sections'][-1]['end'] = 20.021
+            with self.assertRaisesRegex(ValueError, 'Section 2'):
+                validate_review(source, corrected)
+        # An out-of-range intermediate section is never clipped.
+        source['sections'] = [source['sections'][-1],
+                              {'start': 20.021, 'end': 21, 'label_initial': 'verse'}]
+        corrected['sections'] = [dict(x, label_manual='verse') for x in source['sections']]
+        with self.assertRaisesRegex(ValueError, 'Section 1'):
+            validate_review(source, corrected)
+
     def test_time_validation_roundoff_and_diagnostics(self):
         import copy
         source = {'duration': 20, 'sections': [

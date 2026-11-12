@@ -151,3 +151,10 @@ durasi, overlap dan kelebihan durasi. Jika gagal, manifest dan split baru tidak
 ditulis. JSON anotasi asli tidak diubah. Selisih overlap maksimal 0.000001 detik
 diterima sebagai pembulatan floating point; rentang target tetap seperti sumber.
 Overlap lebih besar tetap memerlukan pemeriksaan, walaupun lolos impor web.
+
+Akhir **section terakhir saja** yang melewati durasi maksimal 20 ms dibatasi ke
+durasi untuk target training. `time_adjustments.json` mencatat track, section,
+waktu asli, waktu target, dan selisih. Ini menangani selisih durasi kecil yang
+terlihat pada ekspor audio; penyebab decoder/padding belum dibuktikan. JSON
+sumber dan anotasi tetap utuh. Endpoint internal dan kelebihan >20 ms tetap
+ditolak. Identitas boundary dengan sumber diperiksa sebelum pembatasan.
