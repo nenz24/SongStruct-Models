@@ -62,6 +62,32 @@ python3 -m finetuning.prepare
 
 Hanya review_status=approved dengan label_manual valid pada **semua section** yang menjadi target. label_initial/label prediksi tidak digunakan sebagai ground truth. Boundary, durasi, dan prediksi awal dibandingkan dengan JSON sumber; perubahan yang tidak cocok ditolak. Anotasi pending/submitted diabaikan. Jalankan prepare lagi setelah ekspor baru untuk snapshot training berikutnya. Jangan mengganti manifest saat training sedang berjalan.
 
+## Audit catatan sebelum training
+
+Status approved di web berarti anotasi diterima pengelola, bukan jaminan semua boundary benar. Sebelum mempersiapkan target, jalankan audit pada ekspor terbaru:
+
+```bash
+python3 -m finetuning.audit --export "$HOME/Downloads/songstruct-approved.json"
+```
+
+Tidak memerlukan audio/model. Hasil: outputs.local/finetuning/annotation_audit.json dan section_review.csv. CSV memuat seluruh section approved. Filter kolom issue_hint selain clean untuk melihat catatan; kategori boundary_or_timing dan worship_term hanya petunjuk, bukan diagnosis otomatis.
+
+- Section tanpa catatan: default decision=include.
+- Section bercatatan: default pending dan belum dipakai training.
+- Ubah decision menjadi include hanya jika label dan boundary memang layak; exclude jika salah atau tidak ingin dipakai. pending juga menahan section.
+- Jika boundary salah memengaruhi section sebelum/sesudahnya, tandai tetangganya exclude juga. Semua section tersedia di CSV untuk keperluan ini.
+- Baris dengan boundary_issue=true atau training_eligible=false pada data sumber selalu dikecualikan, meskipun CSV berisi include.
+- Jangan mengedit start/end, track_id, section_index, atau source_digest di CSV. CSV ini mengatur kelayakan training, bukan memperbaiki timestamp.
+- Keputusan lama dipertahankan selama label manual, waktu, catatan, dan identitas section tidak berubah. Catatan/label berubah → keputusan lama tidak berlaku dan section bercatatan ditahan lagi. Ekspor parsial tidak menghapus keputusan untuk lagu yang tidak ada di ekspor tersebut.
+
+Prepare menjalankan audit yang sama secara otomatis:
+
+```bash
+python3 -m finetuning.prepare --export "$HOME/Downloads/songstruct-approved.json"
+```
+
+Hanya section layak dari lagu approved yang dimasukkan ke manifest. Region yang dikecualikan tidak diisi dengan label tetangga; fungsi loss dan metrik melewatinya. Lagu yang semua section-nya ditahan tetap tercatat sebagai review_approved tetapi tidak menjadi sampel training/validation. Split group tetap tidak dipindahkan. JSON asli, catatan cloud, dan boundary tidak diubah.
+
 ## Latih label head
 
 Butuh approved audio pada split train **dan** validation. Jika validation belum mendapat anotasi, tunggu atau prioritaskan review lagu validation; jangan memindahkan holdout untuk memaksa training.

@@ -17,6 +17,44 @@ except ImportError:
 
 
 class DataTests(unittest.TestCase):
+    def test_notes_are_held_until_reviewed_without_losing_clean_sections(self):
+        import csv
+        from finetuning.audit import audit
+        source = {'track_id': 'song.mp3', 'duration': 20, 'sections': [
+            {'start': 0, 'end': 10, 'label_initial': 'verse'},
+            {'start': 10, 'end': 20, 'label_initial': 'chorus'}]}
+        corrected = {**source, 'review_status': 'approved', 'sections': [
+            {**source['sections'][0], 'label_manual': 'verse', 'note': ''},
+            {**source['sections'][1], 'label_manual': 'chorus', 'note': 'chorus start di 0:12'}]}
+        with tempfile.TemporaryDirectory() as folder:
+            decisions, stats = audit([corrected], folder)
+            self.assertEqual(stats['eligible_sections'], 1)
+            self.assertEqual(stats['boundary_or_timing_hints'], 1)
+            self.assertEqual(len(validate_review(source, corrected, decisions)), 1)
+            path = Path(folder) / 'section_review.csv'
+            with path.open(newline='') as handle:
+                rows = list(csv.DictReader(handle))
+            rows[0]['decision'], rows[1]['decision'] = 'exclude', 'include'
+            with path.open('w', newline='') as handle:
+                writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+                writer.writeheader()
+                writer.writerows(rows)
+            # Partial/empty exports must not erase review decisions for other tracks.
+            audit([], folder)
+            decisions, _ = audit([corrected], folder)
+            self.assertEqual(validate_review(source, corrected, decisions), [
+                {'start': 10, 'end': 20, 'label': 'chorus'}])
+            # A changed note invalidates the prior include decision.
+            corrected['sections'][1]['note'] = 'chorus start di 0:13'
+            decisions, _ = audit([corrected], folder)
+            self.assertEqual(validate_review(source, corrected, decisions), [])
+
+    def test_explicit_boundary_issue_cannot_be_included(self):
+        from finetuning.audit import allowed, section_digest
+        section = {'start': 0, 'end': 1, 'label_manual': 'verse', 'note': '', 'boundary_issue': True}
+        decision = {('song', '1', section_digest('song', 1, section)): 'include'}
+        self.assertFalse(allowed('song', 1, section, decision))
+
     def test_prepare_before_and_after_approval_preserves_frozen_plan(self):
         import finetuning.prepare as prepare
         import check_dataset

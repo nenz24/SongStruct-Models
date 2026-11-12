@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import unicodedata
 from .common import BASE, LABELS, config, fingerprint, read, sha_file, write
+from .audit import allowed, audit
 
 
 def group_suggestion(track_id):
@@ -15,14 +16,14 @@ def group_suggestion(track_id):
     return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', name).casefold()).strip()
 
 
-def validate_review(original, corrected):
+def validate_review(original, corrected, decisions=None):
     if corrected.get('review_status') != 'approved':
         return None
     source, edited = original['sections'], corrected['sections']
     if len(source) != len(edited) or abs(float(original['duration']) - float(corrected['duration'])) > 0.001:
         raise ValueError('Approved annotation does not match source duration/sections.')
     previous, result = 0.0, []
-    for a, b in zip(source, edited):
+    for index, (a, b) in enumerate(zip(source, edited), 1):
         start, end = a['start'], a['end']
         if not (math.isfinite(start + end) and previous <= start < end <= original['duration'] + 0.001):
             raise ValueError('Non-finite, overlapping or out-of-range sections.')
@@ -30,7 +31,8 @@ def validate_review(original, corrected):
             raise ValueError('Boundary/prediksi awal berubah dari source.')
         if b.get('label_manual') not in LABELS:
             raise ValueError('Every approved section must have a valid manual label.')
-        result.append({'start': start, 'end': end, 'label': b['label_manual']})
+        if allowed(corrected.get('track_id', ''), index, b, decisions or {}):
+            result.append({'start': start, 'end': end, 'label': b['label_manual']})
         previous = end
     return result
 
@@ -97,13 +99,14 @@ def main():
             writer.writerows(sorted(group_map.items()))
     reviewed = {}
     documents = read(args.export.expanduser())['tracks'] if args.export else [read(p) for p in Path(cfg['reviewed_dir']).rglob('*.json')]
+    decisions, audit_stats = audit(documents, work)
     for doc in documents:
         key = doc.get('track_id')
         if doc.get('review_status') != 'approved':
             continue
         if key not in originals or key in reviewed:
             raise ValueError(f'Unknown/duplicate approved track: {key}')
-        reviewed[key] = validate_review(originals[key][0], doc)
+        reviewed[key] = validate_review(originals[key][0], doc, decisions)
     records, hashes = [], {}
     for key, (doc, audio, source) in originals.items():
         digest = sha_file(audio)
@@ -113,7 +116,9 @@ def main():
         hashes[digest] = group
         records.append({'id': fingerprint(key)[:24], 'track_id': key, 'group_id': group,
                         'audio_path': str(audio), 'audio_sha256': digest,
-                        'duration': doc['duration'], 'approved': key in reviewed,
+                        'duration': doc['duration'], 'review_approved': key in reviewed,
+                        'approved': bool(reviewed.get(key)),
+                        'excluded_sections': len(doc['sections']) - len(reviewed[key]) if key in reviewed else 0,
                         'sections': reviewed.get(key, []), 'source_json': str(source),
                         'annotation_sha256': fingerprint(reviewed.get(key, []))})
     plan_path = work / 'split_plan.json'
@@ -139,6 +144,7 @@ def main():
     counts = {s: sum(r['approved'] and r['split'] == s for r in records) for s in ('train', 'val', 'test')}
     gb = sum(float(r['duration']) for r in records) * 25 * 4096 * 4 / 1024 ** 3
     print(f"Inventory: {len(records)} audio; approved: {len(reviewed)}; approved split: {counts}")
+    print(f"Section layak: {audit_stats['eligible_sections']}; ditahan/dikecualikan: {audit_stats['excluded_or_pending_sections']}.")
     print(f'Perkiraan cache float32: {gb:.1f} GiB (belum termasuk checkpoint).')
     print(f'Group map: {mapping}')
     if not plan:
