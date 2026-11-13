@@ -185,6 +185,37 @@ class GradientTests(unittest.TestCase):
                 return {'function_logits': self.function_head(x), 'boundary_logits': self.boundary_head(x)}
         return Tiny()
 
+    def test_window_partition_and_fractional_section_supervision(self):
+        from finetuning.engine import training_windows, label_loss
+        values = np.ones((75, 4096), dtype=np.float32)
+        windows = list(training_windows(values, 7, 1.2))
+        self.assertEqual([len(v) for v, _ in windows], [30, 30, 15])
+        self.assertEqual([o for _, o in windows], [7, 8.2, 9.4])
+        self.assertTrue(all(np.shares_memory(v, values) for v, _ in windows))
+        sections = [{'start': 7, 'end': 10, 'label': 'verse'}]
+        losses = [label_loss(torch.zeros(len(v)//3, 8), sections, o, fractional=True)
+                  for v, o in windows]
+        self.assertAlmostEqual(sum(x.item() for x in losses), float(np.log(8)), places=5)
+        self.assertIsNone(label_loss(torch.zeros(5, 8), [], 0, fractional=True))
+        with self.assertRaises(ValueError):
+            list(training_windows(values, 0, 0))
+
+    def test_checkpoint_matches_backbone_gradients(self):
+        from finetuning.engine import configure_training, logits, label_loss
+        import copy
+        torch.manual_seed(7)
+        model = self.model()
+        second = copy.deepcopy(model)
+        values = np.ones((30, 4096), dtype=np.float32)
+        for candidate, checkpoint in [(model, False), (second, True)]:
+            configure_training(candidate, 'label_backbone')
+            candidate.train()
+            scores = logits(candidate, values, torch.device('cpu'), checkpoint=checkpoint)
+            label_loss(scores, [{'start': 0, 'end': 1.2, 'label': 'verse'}], 0).backward()
+        for (name, a), (_, b) in zip(model.named_parameters(), second.named_parameters()):
+            if a.grad is not None:
+                self.assertTrue(torch.allclose(a.grad, b.grad), name)
+
     def test_only_label_head_changes(self):
         from finetuning.engine import configure_training, logits, label_loss, train_mode
         torch.manual_seed(4)
@@ -233,6 +264,10 @@ class GradientTests(unittest.TestCase):
                     patch.object(trainer, 'load_head', side_effect=lambda *a: (self.model(), None)), \
                     patch.object(sys, 'argv', ['train', '--run-name', 'smoke', '--device', 'cpu']):
                 trainer.main()
+                cfg['training'].update(trainable='label_backbone', window_seconds=.24, gradient_checkpointing=True)
+                with patch.object(sys, 'argv', ['train', '--smoke-test', '--run-name', 'probe', '--device', 'cpu']):
+                    trainer.main()
+                self.assertFalse((root / 'runs/probe').exists())
             run = root / 'runs/smoke'
             self.assertTrue((run / 'baseline_val.json').is_file())
             self.assertEqual(len((run / 'history.jsonl').read_text().splitlines()), 2)

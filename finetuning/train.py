@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import random
 from .common import config, device, fingerprint, iter_features, load_head, sha_file, write
-from .engine import configure_training, evaluate, label_loss, logits, manifest, train_mode
+from .engine import configure_training, evaluate, label_loss, logits, manifest, train_mode, training_windows
 
 
 def save_weights(path, model, **metadata):
@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--config')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'mps', 'cuda'])
     parser.add_argument('--run-name', default=None)
+    parser.add_argument('--smoke-test', action='store_true', help='Run one training window including backward and optimizer step, then exit without creating a run.')
     args = parser.parse_args()
     cfg = config(args.config)
     data, provenance = manifest(cfg)
@@ -46,10 +47,35 @@ def main():
     if Path(run_name).name != run_name or run_name in ('.', '..'):
         raise ValueError('run-name must be a simple directory name.')
     run = Path(cfg['work_dir']) / 'runs' / run_name
-    run.mkdir(parents=True, exist_ok=False)
+    if not args.smoke_test:
+        run.mkdir(parents=True, exist_ok=False)
     model, _ = load_head(cfg, target)
     params = configure_training(model, settings['trainable'])
     optimizer = torch.optim.AdamW(params, lr=settings['learning_rate'], weight_decay=settings['weight_decay'])
+    window_seconds = settings.get('window_seconds')
+    checkpointing = settings.get('gradient_checkpointing', False)
+    if window_seconds is not None:
+        # Validate before baseline evaluation or starting an epoch.
+        list(training_windows(np.empty((0, 4096)), 0, window_seconds))
+    if args.smoke_test:
+        train_mode(model, settings['trainable'])
+        for row in train:
+            for values, offset, signature in iter_features(cfg, row):
+                if signature != provenance:
+                    raise ValueError('Mixed encoder caches.')
+                for piece, start in training_windows(values, offset, window_seconds):
+                    scores = logits(model, piece, target, checkpoint=checkpointing)
+                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None)
+                    if loss is None:
+                        continue
+                    if not torch.isfinite(loss):
+                        raise ValueError('Non-finite smoke loss.')
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(params, settings['max_grad_norm'], error_if_nonfinite=True)
+                    optimizer.step()
+                    print(f'Smoke OK: {len(piece)/25:.2f}s, loss={loss.item():.4f}; backward + optimizer completed. No checkpoint saved.', flush=True)
+                    return
+        raise ValueError('No supervised window for smoke test.')
     metadata = {'plan_id': data['plan_id'], 'provenance_id': provenance, 'config': cfg,
                 'initial_checkpoint_sha256': sha_file(cfg['checkpoint']),
                 'annotations_id': fingerprint([(r['id'], r['annotation_sha256']) for r in train + val]),
@@ -82,19 +108,21 @@ def main():
             for values, offset, signature in iter_features(cfg, row):
                 if signature != provenance:
                     raise ValueError('Mixed encoder caches.')
-                scores = logits(model, values, target)
-                loss = label_loss(scores, row['sections'], offset)
-                if loss is None:
-                    continue
-                if not torch.isfinite(loss):
-                    raise ValueError('Non-finite label loss.')
-                loss.backward()
-                accumulated += 1
-                losses.append(loss.item())
-                if accumulated == settings['gradient_accumulation']:
-                    update(accumulated)
-                    accumulated = 0
-                    steps += 1
+                for piece, start in training_windows(values, offset, window_seconds):
+                    scores = logits(model, piece, target, checkpoint=checkpointing)
+                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None)
+                    if loss is None:
+                        continue
+                    if not torch.isfinite(loss):
+                        raise ValueError('Non-finite label loss.')
+                    loss.backward()
+                    accumulated += 1
+                    losses.append(loss.item())
+                    if accumulated == settings['gradient_accumulation']:
+                        update(accumulated)
+                        accumulated = 0
+                        steps += 1
+                    del scores, loss
         if accumulated:
             update(accumulated)
             steps += 1

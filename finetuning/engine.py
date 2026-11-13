@@ -41,13 +41,30 @@ def train_mode(model, stage):
         model.boundary_head.eval()
 
 
-def logits(model, values, target):
+def training_windows(values, offset, seconds=None):
+    """Slice existing caches on the output stride; do not alter cache files."""
+    if seconds is None:
+        yield values, offset
+        return
+    if not math.isfinite(seconds) or seconds < 0.12:
+        raise ValueError('window_seconds must be finite and >=0.12.')
+    frames = int(seconds * 25 / 3) * 3
+    for start in range(0, len(values), frames):
+        yield values[start:start + frames], offset + start / 25
+
+
+def logits(model, values, target, checkpoint=False):
     import numpy as np
     import torch
     embeddings = torch.from_numpy(np.array(values, dtype=np.float32, copy=True)).unsqueeze(0).to(target)
-    return model.forward_func({'input_embeddings': embeddings,
-                               'dataset_ids': torch.tensor([5], dtype=torch.long, device=target),
-                               'masks': None})['function_logits'][0][:, list(CLASS_IDS)]
+    def forward(x):
+        return model.forward_func({'input_embeddings': x,
+                                   'dataset_ids': torch.tensor([5], dtype=torch.long, device=target),
+                                   'masks': None})['function_logits'][0][:, list(CLASS_IDS)]
+    if checkpoint and model.training and torch.is_grad_enabled():
+        from torch.utils.checkpoint import checkpoint as recompute
+        return recompute(forward, embeddings, use_reentrant=False, preserve_rng_state=True)
+    return forward(embeddings)
 
 
 def pooled_sections(scores, sections, offset):
@@ -67,10 +84,13 @@ def pooled_sections(scores, sections, offset):
     return result
 
 
-def label_loss(scores, sections, offset):
+def label_loss(scores, sections, offset, fractional=False):
     import torch
+    # Fractional supervision: a section spanning windows contributes only its
+    # covered fraction in each window, rather than a complete duplicate target.
     terms = [-p[LABELS.index(sections[i]['label'])].clamp_min(1e-8).log()
-             for i, p, _ in pooled_sections(scores, sections, offset)]
+             * (covered / (sections[i]['end'] - sections[i]['start']) if fractional else 1.0)
+             for i, p, covered in pooled_sections(scores, sections, offset)]
     return torch.stack(terms).mean() if terms else None
 
 

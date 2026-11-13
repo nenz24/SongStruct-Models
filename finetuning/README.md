@@ -158,3 +158,22 @@ waktu asli, waktu target, dan selisih. Ini menangani selisih durasi kecil yang
 terlihat pada ekspor audio; penyebab decoder/padding belum dibuktikan. JSON
 sumber dan anotasi tetap utuh. Endpoint internal dan kelebihan >20 ms tetap
 ditolak. Identitas boundary dengan sumber diperiksa sebelum pembatasan.
+
+### Backbone pada Mac dengan RAM terbatas
+
+Dalam salinan konfigurasi, set `training.window_seconds=60`,
+`training.gradient_checkpointing=true`, `trainable=label_backbone`, dan
+`learning_rate=1e-5`. Window dipotong dari cache pada kelipatan stride 3;
+tidak memerlukan ekstraksi ulang. Section lintas window tetap memakai label
+aslinya, dengan loss fragmen dikalikan fraksi durasi section yang tercakup.
+Ini adalah objective lokal per fragmen, bukan pooling satu section utuh seperti
+evaluasi. Konteks training lebih pendek bisa memengaruhi kualitas. Validasi
+tetap membaca window cache asli. Gradient checkpointing non-reentrant
+menghitung ulang forward saat backward dan mempertahankan RNG dropout.
+
+Jalankan `python -m finetuning.train --config outputs.local/backbone-config.json
+--device mps --smoke-test` terlebih dahulu (dalam satu baris). Mode ini menjalankan
+satu window supervised, backward, clipping dan optimizer step tanpa menulis
+checkpoint/run; model dibuang saat proses selesai. Lolos smoke bukan jaminan
+seluruh run muat. Selanjutnya jalankan tanpa `--smoke-test` dengan nama run baru.
+Jika masih OOM, coba 30 detik. Jangan melepas batas proteksi memori MPS.
