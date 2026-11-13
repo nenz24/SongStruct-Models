@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import random
 from .common import config, device, fingerprint, iter_features, load_head, sha_file, write
-from .engine import configure_training, evaluate, label_loss, logits, manifest, train_mode, training_windows
+from .engine import configure_training, evaluate, label_loss, logits, manifest, train_mode, training_windows, training_class_weights
 
 
 def save_weights(path, model, **metadata):
@@ -39,6 +39,9 @@ def main():
     settings = cfg['training']
     if min(settings['epochs'], settings['gradient_accumulation'], settings['patience']) < 1:
         raise ValueError('epochs, accumulation, patience must be positive.')
+    class_counts, class_weights = training_class_weights(train, settings.get('class_weighting', 'none'))
+    print('Class weighting:', settings.get('class_weighting', 'none'), flush=True)
+    print(json.dumps({'train_counts': class_counts, 'weights': class_weights}), flush=True)
     random.seed(cfg['seed'])
     np.random.seed(cfg['seed'])
     torch.manual_seed(cfg['seed'])
@@ -65,7 +68,7 @@ def main():
                     raise ValueError('Mixed encoder caches.')
                 for piece, start in training_windows(values, offset, window_seconds):
                     scores = logits(model, piece, target, checkpoint=checkpointing)
-                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None)
+                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None, class_weights=class_weights)
                     if loss is None:
                         continue
                     if not torch.isfinite(loss):
@@ -79,7 +82,7 @@ def main():
     metadata = {'plan_id': data['plan_id'], 'provenance_id': provenance, 'config': cfg,
                 'initial_checkpoint_sha256': sha_file(cfg['checkpoint']),
                 'annotations_id': fingerprint([(r['id'], r['annotation_sha256']) for r in train + val]),
-                'trainable': settings['trainable']}
+                'trainable': settings['trainable'], 'train_class_counts': class_counts, 'class_weights': class_weights}
     write(run / 'run.json', metadata)
     print(f'Train {len(train)}, val {len(val)}; device={target}; trainable={sum(p.numel() for p in params):,}', flush=True)
     baseline = evaluate(model, val, cfg, target, provenance)
@@ -110,7 +113,7 @@ def main():
                     raise ValueError('Mixed encoder caches.')
                 for piece, start in training_windows(values, offset, window_seconds):
                     scores = logits(model, piece, target, checkpoint=checkpointing)
-                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None)
+                    loss = label_loss(scores, row['sections'], start, fractional=window_seconds is not None, class_weights=class_weights)
                     if loss is None:
                         continue
                     if not torch.isfinite(loss):

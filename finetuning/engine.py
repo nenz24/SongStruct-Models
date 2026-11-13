@@ -84,11 +84,36 @@ def pooled_sections(scores, sections, offset):
     return result
 
 
-def label_loss(scores, sections, offset, fractional=False):
+def training_class_weights(records, mode='none'):
+    """Counts only eligible sections of approved train records; never holdouts."""
+    counts = {name: 0 for name in LABELS}
+    for row in records:
+        if row.get('split') != 'train' or not row.get('approved'):
+            continue
+        for section in row['sections']:
+            counts[section['label']] += 1
+    if mode not in ('none', 'sqrt_inverse'):
+        raise ValueError('class_weighting must be none or sqrt_inverse')
+    weights = {name: 1.0 for name in LABELS}
+    if mode == 'sqrt_inverse':
+        total = sum(counts.values())
+        present = sum(n > 0 for n in counts.values())
+        if not total:
+            raise ValueError('No eligible train sections for class weighting.')
+        # Smooth inverse frequency to avoid extreme minority-class gradients.
+        raw = {name: min(3.0, math.sqrt(total / (present * n))) if n else 0.0
+               for name, n in counts.items()}
+        mean = sum(counts[name] * raw[name] for name in LABELS) / total
+        weights = {name: value / mean for name, value in raw.items()}
+    return counts, weights
+
+
+def label_loss(scores, sections, offset, fractional=False, class_weights=None):
     import torch
     # Fractional supervision: a section spanning windows contributes only its
     # covered fraction in each window, rather than a complete duplicate target.
     terms = [-p[LABELS.index(sections[i]['label'])].clamp_min(1e-8).log()
+             * (class_weights[sections[i]['label']] if class_weights is not None else 1.0)
              * (covered / (sections[i]['end'] - sections[i]['start']) if fractional else 1.0)
              for i, p, covered in pooled_sections(scores, sections, offset)]
     return torch.stack(terms).mean() if terms else None

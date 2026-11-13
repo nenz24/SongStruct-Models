@@ -234,6 +234,28 @@ class GradientTests(unittest.TestCase):
         self.assertEqual(details[0]['correct'], details[0]['prediction'] == 'verse')
         self.assertAlmostEqual(details[0]['confidence'], max(details[0]['probabilities'].values()))
 
+    def test_class_weighting_uses_only_eligible_training_sections(self):
+        from finetuning.engine import training_class_weights, label_loss
+        train = {'approved': True, 'split': 'train', 'sections':
+                 [{'label': 'chorus'}] * 9 + [{'label': 'bridge'}]}
+        holdout = {'approved': True, 'split': 'val', 'sections': [{'label': 'bridge'}] * 100}
+        pending = {'approved': False, 'split': 'train', 'sections': [{'label': 'bridge'}] * 100}
+        counts, weights = training_class_weights([train, holdout, pending], 'sqrt_inverse')
+        self.assertEqual(counts['bridge'], 1)
+        self.assertEqual(counts['chorus'], 9)
+        self.assertGreater(weights['bridge'], weights['chorus'])
+        self.assertAlmostEqual(sum(counts[k] * weights[k] for k in counts) / 10, 1)
+        self.assertEqual(weights['silence'], 0)
+        scores = torch.zeros(10, 8, requires_grad=True)
+        section = [{'start': 0, 'end': 1.2, 'label': 'bridge'}]
+        plain = label_loss(scores, section, 0)
+        weighted = label_loss(scores, section, 0, class_weights=weights)
+        self.assertAlmostEqual(weighted.item(), plain.item() * weights['bridge'], places=5)
+        weighted.backward()
+        self.assertTrue(torch.isfinite(scores.grad).all())
+        _, ones = training_class_weights([train], 'none')
+        self.assertTrue(torch.equal(plain, label_loss(scores, section, 0, class_weights=ones)))
+
     def test_only_label_head_changes(self):
         from finetuning.engine import configure_training, logits, label_loss, train_mode
         torch.manual_seed(4)

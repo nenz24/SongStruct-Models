@@ -190,3 +190,19 @@ ditahan tidak masuk manifest; cocokkan berdasarkan track_id/start/end.
 Notebook memfilter kesalahan, memutar audio lokal, dan menyimpan catatan
 terpisah tanpa mengubah anotasi. Confidence tidak terkalibrasi. Gunakan val
 untuk diagnosis; jangan memilih eksperimen dari test berulang.
+
+### Eksperimen pembobotan kelas pada head label
+
+Buka `weighted_head_experiment.ipynb` dari root. Ini memakai manual labels yang
+sama tanpa anotasi ulang; mulai dari pretrained, head-only, lr 1e-4, window
+cache asli, checkpointing mati. `training.class_weighting=sqrt_inverse`
+menghitung n_c hanya dari eligible approved train sections: raw weight =
+min(3, sqrt(N/(K*n_c))), lalu dibagi rata-rata bobot berbobot jumlah section
+agar rata-rata train bernilai 1. Batas 3 berlaku sebelum normalisasi; kelas
+tanpa contoh train berbobot 0 dan tidak dapat dipelajari dari kelas kosong.
+Bobot mengalikan loss section, bukan mengganti label/probabilitas. Statistik
+train dan bobot disimpan di run.json serta checkpoint. Opsi default `none`
+mempertahankan loss lama. Validasi dan metrik tidak berbobot; pilih checkpoint
+berdasarkan F1 validasi. Test tidak dipakai untuk bobot/pemilihan eksperimen.
+Pembobotan dapat mengurangi precision kelas tertentu atau menyebabkan
+overfitting; pertahankan worship-v3 jika validasi lebih buruk.
