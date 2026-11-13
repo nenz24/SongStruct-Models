@@ -177,3 +177,16 @@ satu window supervised, backward, clipping dan optimizer step tanpa menulis
 checkpoint/run; model dibuang saat proses selesai. Lolos smoke bukan jaminan
 seluruh run muat. Selanjutnya jalankan tanpa `--smoke-test` dengan nama run baru.
 Jika masih OOM, coba 30 detik. Jangan melepas batas proteksi memori MPS.
+
+### Laporan kesalahan validasi
+
+Buka `validation_error_review.ipynb` di root dengan kernel Python SongFormer.
+Notebook membuat laporan metrik dan prediksi lengkap menggunakan `evaluate
+--sections-output <path.json>` (dalam satu perintah). Semua section layak
+dicatat: label manual, prediksi, probabilitas 8 kelas, confidence, margin,
+coverage, track/audio path dan start/end. Metrik dan pooling lintas chunk
+tidak berubah. Target section index bukan nomor web, karena section yang
+ditahan tidak masuk manifest; cocokkan berdasarkan track_id/start/end.
+Notebook memfilter kesalahan, memutar audio lokal, dan menyimpan catatan
+terpisah tanpa mengubah anotasi. Confidence tidak terkalibrasi. Gunakan val
+untuk diagnosis; jangan memilih eksperimen dari test berulang.

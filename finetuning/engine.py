@@ -122,7 +122,7 @@ def metrics_from_sections(predictions):
             'label_order': list(LABELS), 'confusion_matrix': matrix}
 
 
-def evaluate(model, records, cfg, target, provenance_id):
+def evaluate(model, records, cfg, target, provenance_id, details=None):
     import torch
     model.eval()
     predictions = []
@@ -147,4 +147,19 @@ def evaluate(model, records, cfg, target, provenance_id):
                 pred = max(range(len(LABELS)), key=lambda j: probs[j])
                 duration = section['end'] - section['start']
                 predictions.append((true, pred, duration, probs[true], coverage[i] / duration))
+                if details is not None:
+                    ranked = sorted(range(len(LABELS)), key=lambda j: probs[j], reverse=True)
+                    details.append({
+                        'track_id': row['track_id'], 'audio_path': row.get('audio_path'),
+                        # Index in eligible training targets, not the original web section numbering.
+                        'target_section_index': i + 1,
+                        'start': section['start'], 'end': section['end'],
+                        'label_manual': LABELS[true], 'prediction': LABELS[pred],
+                        'correct': true == pred, 'confidence': probs[pred],
+                        'manual_label_probability': probs[true],
+                        'runner_up': LABELS[ranked[1]],
+                        'margin': probs[ranked[0]] - probs[ranked[1]],
+                        'coverage': coverage[i] / duration,
+                        'probabilities': dict(zip(LABELS, probs)),
+                    })
     return metrics_from_sections(predictions)

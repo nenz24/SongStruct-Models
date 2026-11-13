@@ -216,6 +216,24 @@ class GradientTests(unittest.TestCase):
             if a.grad is not None:
                 self.assertTrue(torch.allclose(a.grad, b.grad), name)
 
+    def test_section_report_preserves_metrics_and_pools_across_chunks(self):
+        import finetuning.engine as engine
+        model = self.model()
+        row = {'track_id': 'fixture.mp3', 'audio_path': '/fixture.mp3',
+               'sections': [{'start': 0, 'end': .48, 'label': 'verse'}]}
+        chunks = [(np.ones((6, 4096), dtype=np.float32), 0, 'fixture'),
+                  (np.ones((6, 4096), dtype=np.float32), .24, 'fixture')]
+        details = []
+        with patch.object(engine, 'iter_features', side_effect=lambda *args: iter(chunks)):
+            plain = engine.evaluate(model, [row], {}, torch.device('cpu'), 'fixture')
+            report = engine.evaluate(model, [row], {}, torch.device('cpu'), 'fixture', details=details)
+        self.assertEqual(plain, report)
+        self.assertEqual(len(details), 1)
+        self.assertAlmostEqual(details[0]['coverage'], 1, places=5)
+        self.assertAlmostEqual(sum(details[0]['probabilities'].values()), 1, places=5)
+        self.assertEqual(details[0]['correct'], details[0]['prediction'] == 'verse')
+        self.assertAlmostEqual(details[0]['confidence'], max(details[0]['probabilities'].values()))
+
     def test_only_label_head_changes(self):
         from finetuning.engine import configure_training, logits, label_loss, train_mode
         torch.manual_seed(4)
