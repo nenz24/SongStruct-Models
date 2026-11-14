@@ -2,7 +2,7 @@
 import re
 
 
-def project_text(bundle_id='com.danendra.SongFormerBenchmark', team_id=None):
+def project_text(bundle_id='com.danendra.SongFormerBenchmark', team_id=None, resource_names=None):
     if not re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', bundle_id):
         raise ValueError('Invalid bundle ID')
     if team_id and not re.fullmatch(r'[A-Z0-9]{10}', team_id):
@@ -12,6 +12,10 @@ def project_text(bundle_id='com.danendra.SongFormerBenchmark', team_id=None):
     def add(i, body): obj.append(f'{uid(i)} = {{{body}}};')
     assets = ['HeadFP32.mlmodelc', 'HeadINT8.mlmodelc', 'HeadPalette6.mlmodelc',
               'features.f32', 'reference_logits.f32', 'benchmark_manifest.json']
+    if resource_names is not None:
+        assets = list(resource_names)
+    if not assets or len(assets) > 18 or len(set(assets)) != len(assets) or any(not re.fullmatch(r'[A-Za-z0-9_.-]+',name) for name in assets):
+        raise ValueError('Expected 1..18 distinct safe resource filenames.')
     sources = ['BenchmarkApp.swift', 'BenchmarkRunner.swift']
     for i, name in enumerate(sources):
         add(20+i, f'isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "{name}"; sourceTree = "<group>";')
@@ -22,11 +26,11 @@ def project_text(bundle_id='com.danendra.SongFormerBenchmark', team_id=None):
         add(80+i, f'isa = PBXBuildFile; fileRef = {uid(60+i)};')
     add(3, 'isa = PBXFileReference; explicitFileType = wrapper.application; path = Benchmark.app; sourceTree = BUILT_PRODUCTS_DIR;')
     add(4, f'isa = PBXGroup; children = ({uid(3)},); name = Products; sourceTree = "<group>";')
-    children = ','.join(uid(20+i) for i in range(2))+','+','.join(uid(60+i) for i in range(6))+','+uid(4)
+    children = ','.join(uid(20+i) for i in range(2))+','+','.join(uid(60+i) for i in range(len(assets)))+','+uid(4)
     add(5, f'isa = PBXGroup; children = ({children},); sourceTree = "<group>";')
     add(6, f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({uid(40)},{uid(41)},); runOnlyForDeploymentPostprocessing = 0;')
     add(7, 'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
-    add(8, 'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ('+','.join(uid(80+i) for i in range(6))+',); runOnlyForDeploymentPostprocessing = 0;')
+    add(8, 'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ('+','.join(uid(80+i) for i in range(len(assets)))+',); runOnlyForDeploymentPostprocessing = 0;')
     add(2, f'isa = PBXNativeTarget; buildConfigurationList = {uid(10)}; buildPhases = ({uid(6)},{uid(7)},{uid(8)},); buildRules = (); dependencies = (); name = Benchmark; productName = Benchmark; productReference = {uid(3)}; productType = "com.apple.product-type.application";')
     add(1, f'isa = PBXProject; attributes = {{LastUpgradeCheck = 2700;}}; buildConfigurationList = {uid(9)}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base,); mainGroup = {uid(5)}; productRefGroup = {uid(4)}; projectDirPath = ""; projectRoot = ""; targets = ({uid(2)},);')
     for i, name in [(11,'Debug'),(12,'Release')]:

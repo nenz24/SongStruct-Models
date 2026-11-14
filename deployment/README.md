@@ -298,3 +298,36 @@ Candidate caches require additional disk; completed tracks are resumable.
 
 Compare full-validation F1, per-class metrics, coverage, accuracy and model size.
 Any speed/peak-memory decision still needs physical-iPhone encoder benchmarks.
+
+## Compressed MusicFM on iPhone and cached head combinations
+
+Open `musicfm_device_and_combination_experiment.ipynb`. Part A evaluates each
+already cached MusicFM encoder candidate with the validated palette6 head.
+Neither audio nor encoders are opened: only candidate feature files and the
+compressed head. Split, annotations, checkpoint and cache provenance must match.
+Reports retain metrics with the FP32 head on the SAME encoder so head effects
+are isolated from encoder conversion effects. No test split is used.
+
+Part B prepares a separate Xcode project with `prepare_musicfm_iphone`. By default
+only MusicFM INT8 and palette6 are bundled; the large FP32 source stays on Mac
+as the reference. Optional --include-fp32 bundles it for advanced testing. There
+are two identical real-input fixtures per candidate: a 750-frame prefix and the
+full saved Pilihanku conv/rotary window. The short prefix is not fresh 30s audio
+frontend processing. Fixtures preserve both rotary planes; FP32 reference outputs
+are computed for each actual input length. Candidate validation/source hashes are
+checked before compiling separate model resources. No SongMap files are modified.
+
+Select a signing team and physical iPhone in Xcode. The app runs one candidate
+and fixture per click, avoiding simultaneous loading of large models. Start short
+with all, then failed_full, then compare cpuAndNeuralEngine. Share JSON reports.
+Metrics cover compiled load, first/warm predictions, non-finite counts for every
+call, first-output embedding errors/cosine versus Mac FP32, and process-footprint
+snapshots (NOT peak memory). It also records raw compiled-resource size, device,
+OS, power/thermal state, input hashes and requested compute units (not proof of
+ANE placement). No whole-song, frontend, MuQ, head or Apple timing is measured.
+Source package size and compiled resource size are distinct. Restart the app
+between candidates and repeat tests for cleaner performance comparisons.
+
+Apple SDK compilation/inference cannot be established by Linux CPU tests; run
+preparation/build on Mac and actual device tests before claiming deployment
+readiness. Non-finite device outputs are recorded, not imputed or silently dropped.
