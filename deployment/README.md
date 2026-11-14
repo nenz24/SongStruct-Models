@@ -127,3 +127,47 @@ mode without changing the numerical tolerances. It compares F1, accuracy,
 per-class metrics, prediction agreement and size. No candidate is automatically
 approved. This stage covers the label pipeline only; the encoders account for
 most of the app's size and require separate parity/compression experiments.
+
+## Physical iPhone benchmark, isolated from SongMap
+
+Open `iphone_benchmark_experiment.ipynb` on the Mac. `prepare_iphone` creates a new
+standalone Xcode project under outputs.local, precompiles distinct FP32/INT8/
+palette6 resources with Xcode coremlcompiler, and includes the same real cached
+feature prefix for each. By default it represents 30s audio; optional --seconds
+120 or 420 produces larger fixtures for subsequent tests. The reference logits
+are Mac Core ML FP32, not manual labels or a full accuracy evaluation.
+
+Open Benchmark.xcodeproj, select your personal signing team and physical iPhone,
+then Run. Shared SongMap project, signing and app resources are untouched. The
+Swift target uses optimized builds even for Debug. No Apple signing credentials
+are stored by the preparation script. Share the JSON from the benchmark screen.
+Try all and cpuAndNeuralEngine modes, then the other modes if useful. Requested
+compute units do not prove every operation executes on ANE. Avoid simulator
+results when comparing physical iPhone performance. Run without debugger for
+final timings and repeat under comparable power/thermal conditions.
+
+Reports contain model-load time, first prediction, 5 warm prediction times,
+source package bytes, frame/probability differences versus the identical Mac
+reference, hardware, OS, thermal state and process-footprint snapshots. Footprints
+are not peak memory and include app/fixture/runtime allocations. Model order can
+affect allocator state. Load/first timing is not guaranteed cold OS cache. These
+measurements do not include encoder processing, Apple boundaries, or all-song
+accuracy; no end-to-end speedup is claimed. Swift/iOS compilation must be checked
+on the Mac: Linux CPU tests do not validate the Apple SDK build.
+
+## Existing encoder checks before compression
+
+`verify_encoders --songmap-root ... --seconds 30 --output ...` checks the first
+validation song's short-window FM/MuQ streams against corresponding cache columns.
+Repeat with 120 for long-window streams. Full audio is resampled before slicing,
+matching feature extraction at window edges. It uses the app's reflected log-mel
+input, conv packages and rotary frequency arrays, including their stored precision.
+It allows at most four extra/missing tail frames and reports the actual compared
+prefix; no boundary alignment is silently changed. This is a limited diagnostic,
+not a full encoder parity pass or compressed-encoder evaluation.
+
+Code inspection also found that SongMap SectionLabeler currently performs majority
+voting on frame labels, snaps boundaries to barlines, folds silence/short sections
+and merges repeats. Those operations differ from the fixed Apple boundaries and
+probability pooling used in training evaluation. Head benchmark success therefore
+does not establish parity of the app's rendered section map.
