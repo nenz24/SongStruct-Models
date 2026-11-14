@@ -263,3 +263,38 @@ for this first controlled experiment. The override is hashed into diagnostic
 cache provenance, and the notebook uses a separate cache folder. No SongMap
 resources are overwritten. Full validation and subsequent iPhone tests remain
 required; FP32 storage/time may be larger than the current FP16 encoder.
+
+## Compress repaired MusicFM, not the invalid legacy encoder
+
+Open `musicfm_compression_experiment.ipynb`. It finds the repaired, uncompressed
+MusicFM full-validation report, checks its source repair-report hash, and makes
+independent weight-only INT8/per-channel and palette6/grouped-channel candidates
+using the same compression settings as the head experiments. Smaller/unsupported
+constants can remain float. Added compressed-weight operation counts and actual
+package sizes are recorded. Activation quantization and integer execution are
+not claimed; source FLOAT32 compute export is retained.
+
+Each candidate is tested three times on the exact saved pathological conv/rotary
+inputs. Any NaN/Inf or output-shape change blocks pipeline evaluation. Finite
+lossy numerical mismatch is reported separately and is NOT treated as proof of
+accuracy. A candidate proof explicitly says full validation is pending, and only
+enables diagnostic evaluation, never app integration. Original models and the
+verified FP32 source are unchanged.
+
+For pipeline comparison, frontend, rotary, MuQ and head FP32 stay fixed. Use the
+repaired Core ML pipeline F1 (~0.721639 in the current run), not the original
+training-cache F1, as the encoder compression baseline. Both comparisons remain
+visible in reports. Do not combine the palette head during this experiment.
+
+`evaluate_pipeline --reuse-muq-cache <baseline diagnostic cache>` avoids rerunning
+unchanged MuQ. It checks package hashes for log-mel, MusicFM conv, MuQ conv and
+MuQ, runtime/librosa/platform/profile identity, cache provenance integrity,
+audio hashes and exact chunk offsets. Only the MusicFM short/long columns are
+replaced; MuQ columns are copied without mutation. Candidate frame counts must
+align to the baseline within the existing four-frame tail tolerance. No silence,
+label, boundary or NaN imputation is performed. A distinct candidate cache includes
+the reused-MuQ provenance ID, and changed source models/settings cause rejection.
+Candidate caches require additional disk; completed tracks are resumable.
+
+Compare full-validation F1, per-class metrics, coverage, accuracy and model size.
+Any speed/peak-memory decision still needs physical-iPhone encoder benchmarks.

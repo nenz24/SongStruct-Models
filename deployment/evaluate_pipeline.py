@@ -9,6 +9,7 @@ import numpy as np
 from deployment.compress_coreml import validate_source_report
 from deployment.coreml_features import CoreMLEncoders, EncoderWindowError, extract_chunks
 from deployment.verify_coreml import CoreMLAdapter
+from deployment.musicfm_candidates import reuse_muq_chunks, validate_muq_provenance
 from finetuning.common import config, fingerprint, read, sha_file, write
 from finetuning.engine import evaluate, manifest
 
@@ -35,6 +36,7 @@ def main():
     parser.add_argument('--fp32-validation-report',type=Path,required=True)
     parser.add_argument('--cache-dir',type=Path,default=Path('outputs.local/coreml-encoder-cache'))
     parser.add_argument('--limit',type=int,default=1,help='Validation tracks; 0=all')
+    parser.add_argument('--reuse-muq-cache',type=Path,help='Reuse MuQ streams from a baseline Core ML diagnostic cache after source checks')
     parser.add_argument('--musicfm-export-report',type=Path,help='Optional verified FP32 MusicFM export; keeps original app frontend and rotary values')
     parser.add_argument('--config')
     parser.add_argument('--output',type=Path,required=True)
@@ -71,6 +73,18 @@ def main():
                 or override.get('musicfm_stats_sha256') != original['stats_sha256']):
             raise ValueError('MusicFM export weights/stats differ from frozen training provenance.')
     encoders = CoreMLEncoders(args.songmap_root,cfg['features'],musicfm_export_report=args.musicfm_export_report)
+    reuse_cache = args.reuse_muq_cache.expanduser().resolve() if args.reuse_muq_cache else None
+    reuse_id = None
+    if reuse_cache:
+        if reuse_cache == cache:
+            raise ValueError('Candidate cache must differ from reused baseline cache.')
+        reused = read(reuse_cache/'encoder_provenance.json')
+        reuse_id = validate_muq_provenance(reused,encoders.provenance)
+        for row in rows:
+            for values,_,_ in cached_features(reuse_cache,row,reuse_id):
+                pass
+        encoders.provenance['reused_muq_encoder_id'] = reuse_id
+        encoders.id = fingerprint(encoders.provenance)
     provenance_path = cache/'encoder_provenance.json'
     if provenance_path.exists() and read(provenance_path)['id'] != encoders.id:
         raise ValueError('Encoder packages/settings changed; use a new --cache-dir.')
@@ -88,7 +102,7 @@ def main():
         raise ValueError(f'Diagnostic features require about {required/1024**3:.1f} GiB plus 1 GiB free space.')
     started = time.perf_counter()
     if pending:
-        encoders.load()
+        encoders.load(roles=('log_mel','musicfm_conv','musicfm') if reuse_cache else ('log_mel','musicfm_conv','musicfm','muq_conv','muq'))
     for index,row in enumerate(pending,1):
         print(f'Core ML features [{index}/{len(pending)}]: {row["track_id"]}',flush=True)
         if sha_file(row['audio_path']) != row['audio_sha256']:
@@ -97,8 +111,11 @@ def main():
         folder = cache/row['id']
         folder.mkdir(parents=True,exist_ok=True)
         chunks=[]
+        chunks_iterator=(reuse_muq_chunks(waveform,encoders.encode_musicfm,cfg['features'],
+                         cached_features(reuse_cache,row,reuse_id)) if reuse_cache else
+                         extract_chunks(waveform,encoders.encode_pair,cfg['features']))
         try:
-            for offset,values in extract_chunks(waveform,encoders.encode_pair,cfg['features']):
+            for offset,values in chunks_iterator:
                 name=f'chunk_{int(offset):06d}.npy'
                 with tempfile.NamedTemporaryFile(dir=folder,delete=False) as handle:
                     temporary=Path(handle.name)
@@ -109,7 +126,8 @@ def main():
         except EncoderWindowError as exc:
             failure = {**exc.details, 'track_id':row['track_id'], 'audio_sha256':row['audio_sha256'],
                        'candidate_encoder_id':encoders.id, 'cache_folder':str(folder),
-                       'cache_preserved':True, 'non_finite_values_replaced':False}
+                       'cache_preserved':True, 'non_finite_values_replaced':False,
+                       'model_package_paths':{role:str(path) for role,path in encoders.package_paths.items()}}
             failure_path = cache/'last_encoder_failure.json'
             write(failure_path,failure)
             print('ENCODER FAILURE:',row['track_id'],str(exc),flush=True)
@@ -156,6 +174,8 @@ def main():
         'elapsed_seconds':time.perf_counter()-started,'newly_encoded_tracks':len(pending),
         'diagnostic_cache':str(cache),'ready_for_app_integration':False,
         'musicfm_override':encoders.musicfm_override,
+        'reused_muq_cache':str(reuse_cache) if reuse_cache else None,
+        'reused_muq_encoder_id':reuse_id,
         'scope':'CPU Core ML encoders from audio decoded/resampled by librosa, fixed Apple boundaries and FP32 head. Not Swift audio preprocessing or iPhone timing.'}
     write(output,report)
     print(f'Reference F1={baseline["macro_f1_present"]:.6f}; Core ML encoders F1={converted["macro_f1_present"]:.6f}; delta={report["macro_f1_delta"]:+.6f}')

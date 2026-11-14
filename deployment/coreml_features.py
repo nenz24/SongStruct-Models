@@ -11,6 +11,20 @@ from finetuning.common import fingerprint, read, sha_file
 ROLES = ('log_mel','musicfm_conv','musicfm','muq_conv','muq')
 
 
+def validate_musicfm_proof(proof):
+    if proof.get('compute_precision') != 'float32':
+        raise ValueError('MusicFM candidate must retain FLOAT32 compute export.')
+    scheme = proof.get('compression_scheme')
+    if scheme:
+        if (scheme not in ('int8','palette6') or not proof.get('source_exact_window_passed')
+                or not proof.get('window_finite_passed') or not proof.get('source_full_validation')):
+            raise ValueError('Compressed MusicFM candidate needs verified source and finite-window checks.')
+    elif not proof.get('exact_window_passed'):
+        raise ValueError('MusicFM FP32 export must pass exact-window checks first.')
+    if not proof.get('musicfm_weights_sha256') or not proof.get('musicfm_stats_sha256'):
+        raise ValueError('MusicFM source weights/stats metadata required.')
+
+
 class EncoderStageError(ValueError):
     def __init__(self, details):
         self.details = details
@@ -99,8 +113,7 @@ class CoreMLEncoders:
         if musicfm_export_report:
             proof_path = Path(musicfm_export_report).expanduser().resolve()
             proof = read(proof_path)
-            if not proof.get('exact_window_passed') or proof.get('compute_precision') != 'float32':
-                raise ValueError('MusicFM FP32 export must pass exact-window checks first.')
+            validate_musicfm_proof(proof)
             package = Path(proof['package']).expanduser().resolve()
             if not package.is_dir():
                 raise ValueError('MusicFM FP32 candidate package missing.')
@@ -109,6 +122,9 @@ class CoreMLEncoders:
                 'musicfm_weights_sha256':proof['musicfm_weights_sha256'],
                 'musicfm_stats_sha256':proof['musicfm_stats_sha256'],
                 'rotary_mode':'original_app_values_unchanged'}
+            if proof.get('compression_scheme'):
+                self.musicfm_override['compression_scheme'] = proof['compression_scheme']
+                self.musicfm_override['candidate_validation_pending'] = True
         packages = {}
         for role in ROLES:
             path = self.package_paths[role]
@@ -123,8 +139,8 @@ class CoreMLEncoders:
         self.models = {}
         self.timings = {role: {'calls':0, 'prediction_seconds':0.0} for role in ROLES}
 
-    def load(self):
-        for role in ROLES:
+    def load(self, roles=ROLES):
+        for role in roles:
             print('Loading Core ML encoder component:',role,flush=True)
             self.models[role] = self.ct.models.MLModel(str(self.package_paths[role]),
                 compute_units=self.ct.ComputeUnit.CPU_ONLY)
@@ -132,7 +148,8 @@ class CoreMLEncoders:
                 meta = self.models[role].user_defined_metadata
                 if (meta.get('precision') != 'fp32' or meta.get('hidden_state_index') != '10'
                         or meta.get('musicfm_weights_sha256') != self.musicfm_override['musicfm_weights_sha256']
-                        or meta.get('musicfm_stats_sha256') != self.musicfm_override['musicfm_stats_sha256']):
+                        or meta.get('musicfm_stats_sha256') != self.musicfm_override['musicfm_stats_sha256']
+                        or meta.get('compression_scheme') != self.musicfm_override.get('compression_scheme')):
                     raise ValueError('MusicFM candidate metadata does not match export proof.')
 
     def predict(self, role, values):
@@ -172,3 +189,16 @@ class CoreMLEncoders:
                 raise ValueError(f'Unexpected {name} embedding shape: {values.shape}')
             result.append(values[0])
         return result
+
+    def encode_musicfm(self, audio):
+        print(f'    MusicFM-only encoder window {len(audio)/24000:.2f}s',flush=True)
+        padded = np.pad(audio,(1024,1024),mode='reflect')[None]
+        mel = self.predict('log_mel',{self.first_input('log_mel'):padded})
+        convolved = self.predict('musicfm_conv',{self.first_input('musicfm_conv'):mel})
+        if convolved.ndim != 3 or convolved.shape[0] != 1 or convolved.shape[-1] != 1024:
+            raise ValueError(f'Unexpected MusicFM conv shape: {convolved.shape}')
+        values = self.predict('musicfm',{'conv_in':convolved,
+            'rotary':rotary(convolved.shape[1],self.app['rotary_inv_freq']['musicfm'])})
+        if values.ndim != 3 or values.shape[0] != 1 or values.shape[-1] != 1024:
+            raise ValueError(f'Unexpected MusicFM embedding shape: {values.shape}')
+        return values[0]
