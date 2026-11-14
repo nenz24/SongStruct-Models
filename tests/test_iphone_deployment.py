@@ -45,8 +45,14 @@ class PhoneTests(unittest.TestCase):
                 scheme = Path(path).parent.name
                 metadata = {'checkpoint_sha256':'fixture'}
                 if scheme != 'fp32': metadata['compression_scheme'] = scheme
-                return NS(user_defined_metadata=metadata,
-                          predict=lambda inputs: {'function_logits': np.zeros((1,inputs['input_embeddings'].shape[1]//3,128),dtype=np.float32)})
+                def predict(inputs):
+                    value = inputs['input_embeddings']
+                    self.assertTrue(value.flags.owndata)
+                    self.assertTrue(value.flags.writeable)
+                    self.assertTrue(value.flags.c_contiguous)
+                    self.assertTrue(all(s > 0 for s in value.strides))
+                    return {'function_logits': np.zeros((1,value.shape[1]//3,128),dtype=np.float32)}
+                return NS(user_defined_metadata=metadata, predict=predict)
             def compile_model(command, **kwargs):
                 (Path(command[4]) / (Path(command[3]).stem + '.mlmodelc')).mkdir()
             row = dict(approved=True,split='val',track_id='fixture')
@@ -66,6 +72,30 @@ class PhoneTests(unittest.TestCase):
             self.assertEqual((output/'Assets/features.f32').stat().st_size,30*4096*4)
             self.assertTrue((output/'Benchmark.xcodeproj/project.pbxproj').is_file())
             self.assertTrue((output/'BenchmarkRunner.swift').is_file())
+
+    def test_coreml_input_copies_readonly_mmap_and_noncontiguous_views(self):
+        import tempfile
+        from deployment.prepare_iphone import coreml_feature_input
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'cache.npy'
+            source = np.arange(30*4096, dtype=np.float32).reshape(30,4096)
+            np.save(path,source)
+            cache = np.load(path,mmap_mode='r')
+            for view in (cache, cache[:,::-1], cache.astype('>f4')):
+                result = coreml_feature_input(view)
+                self.assertEqual(result.shape,(1,30,4096))
+                self.assertEqual(result.dtype,np.dtype(np.float32))
+                self.assertTrue(result.flags.c_contiguous)
+                self.assertTrue(result.flags.writeable)
+                self.assertTrue(result.flags.owndata)
+                self.assertTrue(all(s > 0 for s in result.strides))
+                self.assertFalse(np.shares_memory(result,view))
+                np.testing.assert_array_equal(result[0],view)
+            self.assertFalse(cache.flags.writeable)
+            with self.assertRaises(ValueError):
+                coreml_feature_input(source[:4])
+            with self.assertRaises(ValueError):
+                coreml_feature_input(np.full((3,4096),np.nan))
 
     def test_rotary_matches_swift_planes(self):
         frequencies = np.linspace(.001,1,32,dtype=np.float32)

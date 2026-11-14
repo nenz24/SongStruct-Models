@@ -171,3 +171,9 @@ voting on frame labels, snaps boundaries to barlines, folds silence/short sectio
 and merges repeats. Those operations differ from the fixed Apple boundaries and
 probability pooling used in training evaluation. Head benchmark success therefore
 does not establish parity of the app's rendered section map.
+
+The iPhone fixture preparation copies cached memmap slices into an owned, writable,
+native float32 C-order [1,T,4096] array before Core ML prediction. A read-only
+mmap/newaxis view can fail at the Python/Core ML value bridge even when its
+shape/dtype are correct. The source cache is never modified. Input buffer
+metadata is printed for diagnosis; feature contents are not logged.

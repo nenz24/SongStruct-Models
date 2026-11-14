@@ -14,6 +14,17 @@ from finetuning.common import config, iter_features, read, sha_file, write
 from finetuning.engine import manifest
 
 
+def coreml_feature_input(values):
+    """Own a native float32 C buffer; never pass a read-only mmap/newaxis view."""
+    values = np.asarray(values)
+    if values.ndim != 2 or values.shape[1] != 4096 or not 3 <= len(values) <= 10500 or len(values) % 3:
+        raise ValueError('Feature fixture must be [T,4096], with T divisible by 3 in [3,10500].')
+    result = np.array(values[None, :, :], dtype=np.float32, order='C', copy=True)
+    if not np.isfinite(result).all():
+        raise ValueError('Feature fixture contains NaN/Inf.')
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--comparison', type=Path, required=True, help='coreml-compression-*/comparison.json')
@@ -56,13 +67,17 @@ def main():
     frames = min(args.seconds * 25, len(values)) // 3 * 3
     if frames < 3:
         raise ValueError('Fixture too short.')
-    values = np.asarray(values[:frames], dtype='<f4')
+    model_input = coreml_feature_input(values[:frames])
+    values = model_input[0]
+    print('Core ML input:', model_input.shape, model_input.dtype,
+          'strides=', model_input.strides, 'writable=', model_input.flags.writeable,
+          'owns_data=', model_input.flags.owndata, flush=True)
     output.mkdir(parents=True, exist_ok=False)
     assets = output / 'Assets'
     assets.mkdir()
-    values.tofile(assets / 'features.f32')
+    values.astype('<f4', copy=False).tofile(assets / 'features.f32')
     model = ct.models.MLModel(str(source), compute_units=ct.ComputeUnit.CPU_ONLY)
-    reference = np.asarray(model.predict({'input_embeddings': values[None]})['function_logits'], dtype='<f4')
+    reference = np.asarray(model.predict({'input_embeddings': model_input})['function_logits'], dtype='<f4')
     if reference.shape != (1, frames//3, 128) or not np.isfinite(reference).all():
         raise ValueError('Invalid FP32 reference fixture output.')
     reference.tofile(assets / 'reference_logits.f32')
