@@ -1,0 +1,3 @@
+# Install in existing Python 3.11 SongFormer environment on macOS.
+# PyTorch remains at the version used for fine-tuning.
+coremltools>=8.3,<9
