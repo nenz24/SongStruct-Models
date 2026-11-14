@@ -331,3 +331,28 @@ between candidates and repeat tests for cleaner performance comparisons.
 Apple SDK compilation/inference cannot be established by Linux CPU tests; run
 preparation/build on Mac and actual device tests before claiming deployment
 readiness. Non-finite device outputs are recorded, not imputed or silently dropped.
+
+### Fixed shapes after the iPhone MPSGraph assertion
+
+A real-device run completed INT8 short/all, but a later run aborted inside
+MPSGraph with invalid expand_dims axis and "shape for TensorData is not static".
+This points to the GPU runtime/compiler path; PointerUI/LaunchServices/share
+messages do not explain that assertion. The specific compiler defect is not
+proven. It cannot be caught by Swift do/catch to perform a reliable fallback.
+
+Preparation now materializes separate single-function fixed-shape packages for
+each candidate/fixture with coremltools 8.3's public materialization API. It
+reloads the dynamic source per shape because materialization can mutate the MIL
+program. CPU parity is checked against that same compressed dynamic candidate
+with a tighter 1e-3 tolerance, declared dtypes are inspected to detect unexpected
+FLOAT16 introduction, and compressed-weight ops must remain. Exact input shapes
+are checked in the saved spec before compiling. Receipts remain beside the project.
+
+Swift selects a distinct compiled resource per fixture, reports shape policy and
+resource name, and prints the active case before model load/prediction. UI defaults
+to cpuOnly for initial checks; GPU modes are an explicit subsequent experiment.
+This is a candidate workaround, not a verified iOS runtime fix. Source compressed
+packages, encoder caches and accuracy reports are unchanged. Static copies
+duplicate weights in the benchmark bundle, so this is not the final app packaging.
+Regenerate in a new output folder via notebook setup then Part B; no need to rerun
+Part A, training, compression, or encoder feature extraction.

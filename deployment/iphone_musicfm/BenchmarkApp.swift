@@ -6,12 +6,12 @@ struct BenchmarkApp: App {
 }
 
 struct BenchmarkView: View {
-    @State private var mode = "all"
+    @State private var mode = "cpuOnly"
     @State private var candidate = "int8"
     @State private var candidates = ["int8", "palette6"]
     @State private var fixture = "short"
     @State private var running = false
-    @State private var report = "Choose one encoder and fixture. Begin with short, then failed_full. Use a physical iPhone."
+    @State private var report = "Fixed-shape benchmark: begin with cpuOnly and short, then failed_full. Test GPU modes separately. Use a physical iPhone."
     @State private var reportURL: URL?
     private let runner = BenchmarkRunner()
     var body: some View {

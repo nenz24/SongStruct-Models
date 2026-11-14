@@ -9,6 +9,9 @@ actor BenchmarkRunner {
             let resource: String
             let package_bytes: Int
             let compiled_bytes: Int
+            let fixed_resources: [String: String]?
+            let fixed_compiled_bytes: [String: Int]?
+            let fixed_package_bytes: [String: Int]?
         }
         struct Fixture: Decodable {
             let name: String
@@ -22,6 +25,7 @@ actor BenchmarkRunner {
         let models: [Candidate]
         let fixtures: [Fixture]
         let musicfm_weights_sha256: String
+        let shape_policy: String?
     }
 
     private func footprint() -> UInt64? {
@@ -69,7 +73,11 @@ actor BenchmarkRunner {
             "conv_in": MLMultiArray(MLShapedArray<Float>(scalars: conv, shape: [1, fixture.frames, 1024])),
             "rotary": MLMultiArray(MLShapedArray<Float>(scalars: rotary, shape: [2, fixture.frames, 1, 1, 64]))
         ])
-        guard let url = Bundle.main.url(forResource: candidate.resource, withExtension: "mlmodelc") else {
+        if manifest.shape_policy == "fixed_per_fixture", candidate.fixed_resources?[fixtureName] == nil {
+            throw NSError(domain: "MusicFMBenchmark", code: 8, userInfo: [NSLocalizedDescriptionKey: "Fixed fixture resource missing"])
+        }
+        let resource = candidate.fixed_resources?[fixtureName] ?? candidate.resource
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "mlmodelc") else {
             throw NSError(domain: "MusicFMBenchmark", code: 6)
         }
         let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
@@ -81,6 +89,7 @@ actor BenchmarkRunner {
         case "cpuAndNeuralEngine": config.computeUnits = .cpuAndNeuralEngine
         default: config.computeUnits = .all
         }
+        print("MUSICFM_BENCHMARK_START candidate=\(candidateName) fixture=\(fixtureName) mode=\(mode) resource=\(resource) frames=\(fixture.frames)")
         let loadStart = ProcessInfo.processInfo.systemUptime
         let model = try MLModel(contentsOf: url, configuration: config)
         let loadSeconds = ProcessInfo.processInfo.systemUptime - loadStart
@@ -95,6 +104,7 @@ actor BenchmarkRunner {
             }
             return (MLShapedArray<Float>(converting: array).scalars, elapsed)
         }
+        print("MUSICFM_BENCHMARK_PREDICT candidate=\(candidateName) fixture=\(fixtureName) mode=\(mode)")
         let (output, firstSeconds) = try prediction()
         var badFrames: [Int] = []
         var nanCount = 0, infCount = 0, finiteElements = 0, validCosFrames = 0
@@ -157,7 +167,10 @@ actor BenchmarkRunner {
             "first_prediction_bad_frame_indices": badFrames,
             "warm_prediction_invalid_counts": warmInvalidCounts,
             "all_predictions_finite": badFrames.isEmpty && warmInvalidCounts.allSatisfy({ $0 == 0 }),
-            "source_package_bytes": candidate.package_bytes, "compiled_resource_bytes": candidate.compiled_bytes,
+            "source_package_bytes": candidate.package_bytes, "compiled_resource_bytes": candidate.fixed_compiled_bytes?[fixtureName] ?? candidate.compiled_bytes,
+            "bundled_candidate_compiled_bytes_total": candidate.compiled_bytes,
+            "shape_policy": manifest.shape_policy ?? "legacy_dynamic",
+            "model_resource": resource,
             "conv_sha256": fixture.conv_sha256, "rotary_sha256": fixture.rotary_sha256,
             "musicfm_weights_sha256": manifest.musicfm_weights_sha256,
             "finite_elements_compared": finiteElements,
@@ -167,6 +180,7 @@ actor BenchmarkRunner {
             "timing_note": "Compiled resources. First prediction/load are not guaranteed cold OS cache. Requested compute units do not prove ANE placement. Numerical comparisons use first output; all warm calls are checked for invalid values.",
             "ready_for_app_integration": false
         ]
+        if let size = candidate.fixed_package_bytes?[fixtureName] { report["fixed_package_bytes"] = size }
         if finiteElements > 0 {
             report["finite_subset_max_abs_error"] = maxError
             report["finite_subset_mean_abs_error"] = sumError / Double(finiteElements)

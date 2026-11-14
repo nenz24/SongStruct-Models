@@ -12,6 +12,7 @@ from deployment.compress_musicfm import validate_baseline
 from deployment.coreml_features import native_input, validate_musicfm_proof
 from deployment.evaluate_cached_combination import check_same_inventory
 from deployment.iphone_project import project_text
+from deployment.fixed_musicfm import materialize_package
 from finetuning.common import read, sha_file, write
 
 
@@ -63,7 +64,8 @@ def main():
         packages.append((scheme,resource,Path(candidate['package']).resolve()))
     if args.include_fp32:
         packages.append(('fp32','MusicFMFP32',source))
-    resources=[resource+'.mlmodelc' for _,resource,_ in packages]
+    resources=[resource+'_'+fixture+'.mlmodelc' for _,resource,_ in packages
+               for fixture in ('short','failed_full')]
     for name in ('short','failed_full'):
         resources.extend([f'conv_{name}.f32',f'rotary_{name}.f32',f'reference_{name}.f32'])
     resources.append('benchmark_manifest.json')
@@ -102,16 +104,29 @@ def main():
                 or meta.get('hidden_state_index')!='10'
                 or meta.get('compression_scheme')!=(None if scheme=='fp32' else scheme)):
             raise ValueError('Candidate package metadata mismatch.')
-        with tempfile.TemporaryDirectory() as temporary:
-            renamed=Path(temporary)/f'{resource}.mlpackage'
-            shutil.copytree(package,renamed)
-            subprocess.run(['xcrun','coremlcompiler','compile',str(renamed),str(assets)],check=True)
-        compiled=assets/f'{resource}.mlmodelc'
-        if not compiled.is_dir():
-            raise RuntimeError('Compiled model folder missing.')
-        models.append({'name':scheme,'resource':resource,'package_bytes':package_bytes(package),
-                       'compiled_bytes':package_bytes(compiled)})
+        fixed_resources, fixed_compiled_bytes, fixed_package_bytes = {}, {}, {}
+        for fixture in fixtures:
+            fixture_name=fixture['name']
+            fixed_resource=resource+'_'+fixture_name
+            fixed_package=out/'FixedPackages'/f'{fixed_resource}.mlpackage'
+            inputs=fixture_inputs(arrays['conv_in'],arrays['rotary'],fixture['frames'])
+            print('Materializing fixed shape:',scheme,fixture_name,fixture['frames'],flush=True)
+            receipt=materialize_package(ct,package,fixture['frames'],fixed_package,inputs)
+            write(out/f'{scheme}-{fixture_name}-static-shape.json',receipt)
+            subprocess.run(['xcrun','coremlcompiler','compile',str(fixed_package),str(assets)],check=True)
+            compiled=assets/f'{fixed_resource}.mlmodelc'
+            if not compiled.is_dir():
+                raise RuntimeError('Compiled fixed model folder missing.')
+            fixed_resources[fixture_name]=fixed_resource
+            fixed_compiled_bytes[fixture_name]=package_bytes(compiled)
+            fixed_package_bytes[fixture_name]=package_bytes(fixed_package)
+        models.append({'name':scheme,'resource':fixed_resources['short'],
+                       'package_bytes':package_bytes(package),'compiled_bytes':sum(fixed_compiled_bytes.values()),
+                       'fixed_resources':fixed_resources,'fixed_compiled_bytes':fixed_compiled_bytes,
+                       'fixed_package_bytes':fixed_package_bytes})
     write(assets/'benchmark_manifest.json',{'models':models,'fixtures':fixtures,
+        'shape_policy':'fixed_per_fixture',
+        'bundle_size_note':'Separate static models per fixture duplicate weights for benchmark isolation; not a production packaging decision.',
         'musicfm_weights_sha256':repair['musicfm_weights_sha256'],
         'musicfm_stats_sha256':repair['musicfm_stats_sha256'],
         'reference':'Mac repaired FP32 MusicFM with identical saved conv/rotary input',
