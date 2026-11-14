@@ -213,3 +213,27 @@ are diagnostics, not repaired data. No NaN replacement, failed-track exclusion,
 window splitting, or precision fallback is applied. Existing complete diagnostic
 tracks are reused on rerun; share the failure JSON to diagnose the specific model
 and input before changing precision or normalization.
+
+## Exact-window MusicFM NaN reproducer
+
+Open `musicfm_failure_diagnostic.ipynb`. It uses the failure report's absolute
+sample indices (for Pilihanku: 5760000..8617204 at 24kHz), checks source audio and
+Core ML package hashes against the failure provenance, decodes/resamples the full
+song before slicing, and stores the audio/conv/rotary arrays separately under a
+new outputs.local folder. No clipping or normalization is added.
+
+The same conv/rotary inputs run three times through one CPU_ONLY MusicFM instance,
+once through a newly loaded instance, and once after the immediately preceding
+long window on another fresh instance. This last test is a limited length-transition
+probe, not replay of every earlier short/long window in the full-song run.
+Raw outputs are preserved, including NaNs; reports list invalid frame indices and
+fully versus partially invalid frame counts. Declared MIL tensor dtype counts
+are inspected where available, without claiming actual kernel execution precision.
+
+Original MusicFM PyTorch is then loaded on CPU FP32 from the exact weights/stats
+used for cache extraction. No MuQ or training head is loaded. Core ML and PyTorch
+run on the same original audio; the PyTorch result is a diagnostic reference,
+not an automatic fallback in the evaluated pipeline. A finite-frame subset
+similarity is explicitly labelled and never treats corrupted frames as valid.
+Partial reports persist before the PyTorch phase. Share diagnostic.json (not the
+raw waveform/features). No model is re-exported or repaired by this reproducer.
