@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--fp32-validation-report',type=Path,required=True)
     parser.add_argument('--cache-dir',type=Path,default=Path('outputs.local/coreml-encoder-cache'))
     parser.add_argument('--limit',type=int,default=1,help='Validation tracks; 0=all')
+    parser.add_argument('--musicfm-export-report',type=Path,help='Optional verified FP32 MusicFM export; keeps original app frontend and rotary values')
     parser.add_argument('--config')
     parser.add_argument('--output',type=Path,required=True)
     args = parser.parse_args()
@@ -63,7 +64,13 @@ def main():
     if not rows:
         raise ValueError('No eligible validation tracks.')
     cache.mkdir(parents=True,exist_ok=True)
-    encoders = CoreMLEncoders(args.songmap_root,cfg['features'])
+    if args.musicfm_export_report:
+        override=read(args.musicfm_export_report.expanduser().resolve())
+        original=read(Path(cfg['work_dir'])/'encoder_provenance.json')
+        if (override.get('musicfm_weights_sha256') != original['musicfm_sha256']
+                or override.get('musicfm_stats_sha256') != original['stats_sha256']):
+            raise ValueError('MusicFM export weights/stats differ from frozen training provenance.')
+    encoders = CoreMLEncoders(args.songmap_root,cfg['features'],musicfm_export_report=args.musicfm_export_report)
     provenance_path = cache/'encoder_provenance.json'
     if provenance_path.exists() and read(provenance_path)['id'] != encoders.id:
         raise ValueError('Encoder packages/settings changed; use a new --cache-dir.')
@@ -148,6 +155,7 @@ def main():
         'encoder_prediction_timings_this_run':encoders.timings,
         'elapsed_seconds':time.perf_counter()-started,'newly_encoded_tracks':len(pending),
         'diagnostic_cache':str(cache),'ready_for_app_integration':False,
+        'musicfm_override':encoders.musicfm_override,
         'scope':'CPU Core ML encoders from audio decoded/resampled by librosa, fixed Apple boundaries and FP32 head. Not Swift audio preprocessing or iPhone timing.'}
     write(output,report)
     print(f'Reference F1={baseline["macro_f1_present"]:.6f}; Core ML encoders F1={converted["macro_f1_present"]:.6f}; delta={report["macro_f1_delta"]:+.6f}')

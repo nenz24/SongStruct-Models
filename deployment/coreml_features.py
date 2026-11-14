@@ -5,7 +5,7 @@ import platform
 import numpy as np
 from deployment.audit import package_inventory
 from deployment.verify_encoders import rotary
-from finetuning.common import fingerprint, sha_file
+from finetuning.common import fingerprint, read, sha_file
 
 
 ROLES = ('log_mel','musicfm_conv','musicfm','muq_conv','muq')
@@ -81,7 +81,7 @@ def extract_chunks(waveform, encode_pair, settings):
 
 
 class CoreMLEncoders:
-    def __init__(self, songmap_root, settings):
+    def __init__(self, songmap_root, settings, musicfm_export_report=None):
         import coremltools as ct
         self.ct = ct
         self.root = Path(songmap_root).expanduser().resolve() / 'SongMap/Resources/MLModels/SongFormer'
@@ -94,14 +94,31 @@ class CoreMLEncoders:
                 or self.app['stream_order'] != ['musicfm_30s','muq_30s','musicfm_long','muq_long']):
             raise ValueError('Core ML app and training feature profiles differ.')
         import librosa
+        self.package_paths = {role:(self.root/self.app['models'][role]).resolve() for role in ROLES}
+        self.musicfm_override = None
+        if musicfm_export_report:
+            proof_path = Path(musicfm_export_report).expanduser().resolve()
+            proof = read(proof_path)
+            if not proof.get('exact_window_passed') or proof.get('compute_precision') != 'float32':
+                raise ValueError('MusicFM FP32 export must pass exact-window checks first.')
+            package = Path(proof['package']).expanduser().resolve()
+            if not package.is_dir():
+                raise ValueError('MusicFM FP32 candidate package missing.')
+            self.package_paths['musicfm'] = package
+            self.musicfm_override = {'report_sha256':sha_file(proof_path),
+                'musicfm_weights_sha256':proof['musicfm_weights_sha256'],
+                'musicfm_stats_sha256':proof['musicfm_stats_sha256'],
+                'rotary_mode':'original_app_values_unchanged'}
         packages = {}
         for role in ROLES:
-            path = self.root / self.app['models'][role]
+            path = self.package_paths[role]
             packages[role] = fingerprint([(str(p.relative_to(path)),sha_file(p))
                                          for p in sorted(path.rglob('*')) if p.is_file()])
         self.provenance = dict(packages=packages, app_manifest_sha256=sha_file(self.root/'songformer_coreml_manifest.json'),
                                coremltools=ct.__version__, librosa=librosa.__version__,
                                compute_units='CPU_ONLY', platform=platform.platform(), feature_settings=settings)
+        if self.musicfm_override:
+            self.provenance['musicfm_override'] = self.musicfm_override
         self.id = fingerprint(self.provenance)
         self.models = {}
         self.timings = {role: {'calls':0, 'prediction_seconds':0.0} for role in ROLES}
@@ -109,8 +126,14 @@ class CoreMLEncoders:
     def load(self):
         for role in ROLES:
             print('Loading Core ML encoder component:',role,flush=True)
-            self.models[role] = self.ct.models.MLModel(str(self.root/self.app['models'][role]),
+            self.models[role] = self.ct.models.MLModel(str(self.package_paths[role]),
                 compute_units=self.ct.ComputeUnit.CPU_ONLY)
+            if role == 'musicfm' and self.musicfm_override:
+                meta = self.models[role].user_defined_metadata
+                if (meta.get('precision') != 'fp32' or meta.get('hidden_state_index') != '10'
+                        or meta.get('musicfm_weights_sha256') != self.musicfm_override['musicfm_weights_sha256']
+                        or meta.get('musicfm_stats_sha256') != self.musicfm_override['musicfm_stats_sha256']):
+                    raise ValueError('MusicFM candidate metadata does not match export proof.')
 
     def predict(self, role, values):
         input_stats = {name:array_summary(array) for name,array in values.items()}

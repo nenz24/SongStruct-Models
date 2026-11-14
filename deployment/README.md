@@ -237,3 +237,29 @@ not an automatic fallback in the evaluated pipeline. A finite-frame subset
 similarity is explicitly labelled and never treats corrupted frames as valid.
 Partial reports persist before the PyTorch phase. Share diagnostic.json (not the
 raw waveform/features). No model is re-exported or repaired by this reproducer.
+
+## Original-weight FP32 MusicFM candidate
+
+Open `musicfm_fp32_repair_experiment.ipynb` after exact-window diagnostics. The
+exporter loads original MusicFM weights/stats matching cache provenance, takes
+only layers 0..9 (hidden_states[10], without the final encoder normalization),
+and checks that wrapper against the installed native transformers encoder. It
+exposes conv_in [1,T,1024] and rotary [2,T,1,1,64], T<=3000, retaining the current
+app interface. FP32 compute is explicitly requested; it does not upcast the old
+FP16 package or try to reconstruct precision already lost in old weights.
+
+On the exact failed window, reports distinguish original versus app convolution
+outputs, native versus app rotary values, original Core ML versus native PyTorch
+on IDENTICAL saved conv/rotary inputs, and the new FP32 candidate versus PyTorch.
+Source package/input hashes are checked. Dynamic tracing is tested on the long
+failed window. All three real-input FP32 parity checks must pass before the
+export report enables a pipeline override. Synthetic/CPU tests cannot validate
+the real Apple SDK conversion; if it fails, share the partial repair report/log.
+
+`evaluate_pipeline --musicfm-export-report ...` optionally uses this new MusicFM
+package after checking exact-window proof, metadata and frozen weights/stats.
+The frontend, MuQ, app rotary frequency values and FP32 head remain unchanged
+for this first controlled experiment. The override is hashed into diagnostic
+cache provenance, and the notebook uses a separate cache folder. No SongMap
+resources are overwritten. Full validation and subsequent iPhone tests remain
+required; FP32 storage/time may be larger than the current FP16 encoder.
