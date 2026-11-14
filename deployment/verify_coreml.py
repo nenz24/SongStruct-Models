@@ -90,6 +90,8 @@ def main():
         **({'coreml_fp16': converted} if candidate_name == 'fp16' else {}),
         'candidate_name': candidate_name, 'precision_metadata': mlmodel.user_defined_metadata.get('precision'),
         'diagnostic_only': args.diagnostic,
+        'compression_scheme': mlmodel.user_defined_metadata.get('compression_scheme'),
+        'compression_scope': mlmodel.user_defined_metadata.get('compression_scope'),
         'status': 'numerically_consistent' if passed else 'numerical_mismatch_requires_review',
         'macro_f1_delta': converted['macro_f1_present'] - baseline['macro_f1_present'],
         'chunk_checks': checks,

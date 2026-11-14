@@ -96,3 +96,34 @@ before comparing reports. FP32 closer than FP16 would support a precision-relate
 explanation; drift in both calls for investigating attention/export paths on real
 long chunks. Neither outcome alone proves a cause. Full-model encoder parity and
 physical-iPhone performance are still separate from head validation.
+
+## Independent weight-compression candidates
+
+Open `coreml_compression_experiment.ipynb` after a successful full FP32 validation.
+The notebook finds the latest successful `coreml-comparison-*/fp32-validation.json`;
+inspect the printed source paths before running. Each candidate starts from the
+same uncompressed FP32 head, not from FP16 or another compressed model.
+
+`deployment.compress_coreml --package ... --validation-report ... --scheme int8
+--output-dir ...` uses symmetric per-channel INT8 weight compression. Scheme
+`palette6` uses kmeans, 6-bit LUT indices, grouped channels of 32, and one worker.
+Both use a 2048-element threshold; smaller constants and unsupported weights can
+remain float. Operation counts must show newly added compressed-weight ops or
+the command fails. Metadata, source validation hash, package sizes and actual
+compression ratio are reported. Existing packages are never overwritten.
+The source report path/checkpoint metadata must match and full numerical
+validation must have passed. This assumes the locally verified source package
+has not been modified since validation.
+
+These APIs compress weights, not activations. FLOAT32 compute is inherited from
+the source; neither candidate promises INT8/INT6 execution or lower latency.
+`precision` metadata describes the source compute export; `compression_scheme`
+describes storage separately. Grouping keeps more codebooks than a single LUT
+and trades a little storage for potentially better accuracy. Actual speed and
+peak memory must be measured on a physical iPhone after accuracy verification.
+
+The notebook verifies one track then all validation tracks, using diagnostic
+mode without changing the numerical tolerances. It compares F1, accuracy,
+per-class metrics, prediction agreement and size. No candidate is automatically
+approved. This stage covers the label pipeline only; the encoders account for
+most of the app's size and require separate parity/compression experiments.
