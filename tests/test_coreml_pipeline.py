@@ -49,6 +49,41 @@ class ExtractTests(unittest.TestCase):
                 list(cached_features(cache,row,'candidate'))
             np.testing.assert_array_equal(np.load(folder/'chunk.npy'),original)
 
+    def test_nonfinite_outputs_report_component_without_replacing_values(self):
+        from types import SimpleNamespace as NS
+        from deployment.coreml_features import CoreMLEncoders, EncoderStageError
+        encoder=CoreMLEncoders.__new__(CoreMLEncoders)
+        invalid=np.full((1,3,1024),np.nan,dtype=np.float32)
+        encoder.models={'muq':NS(predict=lambda inputs:{'embedding':invalid})}
+        encoder.timings={'muq':{'calls':0,'prediction_seconds':0}}
+        with self.assertRaises(EncoderStageError) as caught:
+            encoder.predict('muq',{'conv_in':np.ones((1,3,1024),np.float32)})
+        details=caught.exception.details
+        self.assertEqual(details['component'],'muq')
+        self.assertEqual(details['reason'],'non_finite_output')
+        self.assertEqual(details['output']['nan_count'],3072)
+        self.assertEqual(details['inputs']['conv_in']['nan_count'],0)
+        self.assertTrue(np.isnan(invalid).all())
+
+    def test_failure_context_identifies_absolute_audio_window(self):
+        from deployment.coreml_features import EncoderStageError, EncoderWindowError
+        count=0
+        def encode(audio):
+            nonlocal count
+            count+=1
+            if count==3:
+                raise EncoderStageError({'component':'musicfm','reason':'non_finite_output'})
+            return [np.ones((25,1024),np.float32)]*2
+        settings=dict(sample_rate=24000,head_window_seconds=1,long_window_seconds=120)
+        with self.assertRaises(EncoderWindowError) as caught:
+            list(extract_chunks(np.ones(48000,np.float32),encode,settings))
+        details=caught.exception.details
+        self.assertEqual(details['component'],'musicfm')
+        self.assertEqual(details['start_sample'],24000)
+        self.assertEqual(details['end_sample'],48000)
+        self.assertEqual(details['stream_window_seconds'],30)
+        self.assertEqual(details['audio_summary']['finite_max'],1)
+
     def test_native_input_copies_readonly_view(self):
         original=np.ones((30,1024),np.float32)
         original.flags.writeable=False

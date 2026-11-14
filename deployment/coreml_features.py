@@ -11,6 +11,29 @@ from finetuning.common import fingerprint, sha_file
 ROLES = ('log_mel','musicfm_conv','musicfm','muq_conv','muq')
 
 
+class EncoderStageError(ValueError):
+    def __init__(self, details):
+        self.details = details
+        super().__init__(f"Core ML encoder failure at {details.get('component')}: {details.get('reason')}")
+
+
+class EncoderWindowError(ValueError):
+    def __init__(self, details):
+        self.details = details
+        super().__init__(f"Encoder {details.get('component', 'unknown')} failed at "
+                         f"{details['start_sample']/details['sample_rate']:.6f}s for "
+                         f"{(details['end_sample']-details['start_sample'])/details['sample_rate']:.6f}s: {details.get('reason')}")
+
+
+def array_summary(values):
+    values = np.asarray(values)
+    finite = values[np.isfinite(values)]
+    return {'shape': list(values.shape), 'dtype': str(values.dtype),
+            'nan_count': int(np.isnan(values).sum()), 'inf_count': int(np.isinf(values).sum()),
+            'finite_min': float(finite.min()) if finite.size else None,
+            'finite_max': float(finite.max()) if finite.size else None}
+
+
 def native_input(values):
     result = np.array(values, dtype=np.float32, order='C', copy=True)
     if not np.isfinite(result).all():
@@ -22,8 +45,19 @@ def extract_chunks(waveform, encode_pair, settings):
     """Same stream/window ordering as frozen PyTorch feature extraction."""
     rate = settings['sample_rate']
     def streams(audio, seconds):
-        parts = [encode_pair(audio[i:i+seconds*rate]) for i in range(0,len(audio),seconds*rate)
-                 if len(audio[i:i+seconds*rate]) > 2048]
+        parts = []
+        for i in range(0,len(audio),seconds*rate):
+            window = audio[i:i+seconds*rate]
+            if len(window) <= 2048:
+                continue
+            try:
+                parts.append(encode_pair(window))
+            except (EncoderStageError, ValueError) as exc:
+                details = dict(getattr(exc,'details',{'reason':str(exc)}))
+                details.update(start_sample=offset+i, end_sample=offset+i+len(window),
+                               sample_rate=rate, stream_window_seconds=seconds,
+                               head_offset_samples=offset, audio_summary=array_summary(window))
+                raise EncoderWindowError(details) from exc
         if not parts:
             raise ValueError('No valid encoder windows.')
         return [np.concatenate([p[k] for p in parts], axis=0) for k in (0,1)]
@@ -79,13 +113,22 @@ class CoreMLEncoders:
                 compute_units=self.ct.ComputeUnit.CPU_ONLY)
 
     def predict(self, role, values):
+        input_stats = {name:array_summary(array) for name,array in values.items()}
         t = time.perf_counter()
-        output = self.models[role].predict({name:native_input(array) for name,array in values.items()})
+        try:
+            output = self.models[role].predict({name:native_input(array) for name,array in values.items()})
+        except Exception as exc:
+            raise EncoderStageError({'component':role, 'reason':'prediction_error',
+                'error_type':type(exc).__name__, 'error':str(exc)[:2000], 'inputs':input_stats}) from exc
         self.timings[role]['calls'] += 1
         self.timings[role]['prediction_seconds'] += time.perf_counter()-t
         arrays = [np.asarray(output[key]) for key in sorted(output) if isinstance(output[key],np.ndarray)]
         if len(arrays) != 1:
-            raise ValueError(f'Expected one array from {role}; found {len(arrays)}.')
+            raise EncoderStageError({'component':role,'reason':'unexpected_output_count',
+                                     'array_count':len(arrays),'inputs':input_stats})
+        if not np.isfinite(arrays[0]).all():
+            raise EncoderStageError({'component':role,'reason':'non_finite_output',
+                                     'inputs':input_stats,'output':array_summary(arrays[0])})
         return arrays[0]
 
     def first_input(self, role):

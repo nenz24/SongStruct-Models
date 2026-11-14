@@ -7,7 +7,7 @@ import tempfile
 import time
 import numpy as np
 from deployment.compress_coreml import validate_source_report
-from deployment.coreml_features import CoreMLEncoders, extract_chunks
+from deployment.coreml_features import CoreMLEncoders, EncoderWindowError, extract_chunks
 from deployment.verify_coreml import CoreMLAdapter
 from finetuning.common import config, fingerprint, read, sha_file, write
 from finetuning.engine import evaluate, manifest
@@ -90,14 +90,24 @@ def main():
         folder = cache/row['id']
         folder.mkdir(parents=True,exist_ok=True)
         chunks=[]
-        for offset,values in extract_chunks(waveform,encoders.encode_pair,cfg['features']):
-            name=f'chunk_{int(offset):06d}.npy'
-            with tempfile.NamedTemporaryFile(dir=folder,delete=False) as handle:
-                temporary=Path(handle.name)
-                np.save(handle,values,allow_pickle=False)
-            temporary.replace(folder/name)
-            chunks.append({'file':name,'offset':offset,'frames':len(values)})
-            print(f'  {offset:.1f}s: {len(values)} frames',flush=True)
+        try:
+            for offset,values in extract_chunks(waveform,encoders.encode_pair,cfg['features']):
+                name=f'chunk_{int(offset):06d}.npy'
+                with tempfile.NamedTemporaryFile(dir=folder,delete=False) as handle:
+                    temporary=Path(handle.name)
+                    np.save(handle,values,allow_pickle=False)
+                temporary.replace(folder/name)
+                chunks.append({'file':name,'offset':offset,'frames':len(values)})
+                print(f'  {offset:.1f}s: {len(values)} frames',flush=True)
+        except EncoderWindowError as exc:
+            failure = {**exc.details, 'track_id':row['track_id'], 'audio_sha256':row['audio_sha256'],
+                       'candidate_encoder_id':encoders.id, 'cache_folder':str(folder),
+                       'cache_preserved':True, 'non_finite_values_replaced':False}
+            failure_path = cache/'last_encoder_failure.json'
+            write(failure_path,failure)
+            print('ENCODER FAILURE:',row['track_id'],str(exc),flush=True)
+            print('Diagnostic report:',failure_path,flush=True)
+            raise RuntimeError(f'Encoder failed. Share {failure_path}. Completed cache tracks were preserved.') from exc
         if not chunks:
             raise ValueError('No encoder chunks produced.')
         write(folder/'metadata.json',{'audio_sha256':row['audio_sha256'],

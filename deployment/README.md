@@ -203,3 +203,13 @@ split and source-cache provenance must match the prior FP32 proof. Prediction
 component timings cover newly encoded tracks in this run only, exclude many
 other costs, and are not iPhone/end-to-end timings. A diagnostic result is not
 an automatic app-integration approval or a compressed-encoder result.
+
+If an encoder produces NaN/Inf, the pipeline now stops at the first failing
+component (log_mel, conv or encoder) before propagating it into other models.
+`outputs.local/coreml-encoder-cache/last_encoder_failure.json` records track,
+absolute sample window, short/long stream, component, input/output shapes and
+finite ranges/counts. It contains no waveform/embedding arrays. Finite statistics
+are diagnostics, not repaired data. No NaN replacement, failed-track exclusion,
+window splitting, or precision fallback is applied. Existing complete diagnostic
+tracks are reused on rerun; share the failure JSON to diagnose the specific model
+and input before changing precision or normalization.
