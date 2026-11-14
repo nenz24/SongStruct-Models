@@ -1,4 +1,4 @@
-"""Export the fine-tuned cached-feature label pipeline to Core ML FP16 (no encoders)."""
+"""Export the fine-tuned cached-feature label pipeline to Core ML FP16 or FP32 (no encoders)."""
 import argparse
 import importlib.metadata
 from pathlib import Path
@@ -37,7 +37,17 @@ def parity(reference, candidate, atol=0.03, rtol=0.02):
     if not np.isfinite(a).all() or not np.isfinite(b).all():
         return {'passed': False, 'reason': 'non-finite logits'}
     delta = np.abs(a.astype(np.float64) - b.astype(np.float64))
+    allowed_a, allowed_b = a[..., list(CLASS_IDS)], b[..., list(CLASS_IDS)]
+    def probabilities(x):
+        x = x.astype(np.float64)
+        x = np.exp(x - x.max(axis=-1, keepdims=True))
+        return x / x.sum(axis=-1, keepdims=True)
+    probability_delta = np.abs(probabilities(allowed_a) - probabilities(allowed_b))
     return {'passed': bool(np.allclose(a, b, atol=atol, rtol=rtol)),
+            'allowed_logits_passed': bool(np.allclose(allowed_a, allowed_b, atol=atol, rtol=rtol)),
+            'allowed_max_abs_error': float(np.abs(allowed_a.astype(np.float64) - allowed_b.astype(np.float64)).max()),
+            'allowed_probability_max_abs_error': float(probability_delta.max()),
+            'allowed_probability_mean_abs_error': float(probability_delta.mean()),
             'max_abs_error': float(delta.max()), 'mean_abs_error': float(delta.mean()),
             'allowed_frame_argmax_agreement': float((a[..., list(CLASS_IDS)].argmax(-1) ==
                                                      b[..., list(CLASS_IDS)].argmax(-1)).mean()),
@@ -48,6 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config')
     parser.add_argument('--checkpoint', type=Path, default=Path('outputs.local/finetuning/runs/worship-v3/best.pt'))
+    parser.add_argument('--precision', choices=['fp16', 'fp32'], default='fp16')
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
     if platform.system() != 'Darwin':
@@ -91,14 +102,15 @@ def main():
     write(out / 'trace_parity.json', trace_checks)
     if not all(c['passed'] for c in trace_checks):
         raise RuntimeError('Trace failed variable-length checks; no Core ML package saved.')
-    print('Converting FP16 label pipeline...', flush=True)
+    print(f'Converting {args.precision.upper()} label pipeline...', flush=True)
     mlmodel = ct.convert(traced, convert_to='mlprogram',
         inputs=[ct.TensorType(name='input_embeddings',
             shape=(1, ct.RangeDim(lower_bound=3, upper_bound=10500, default=750), 4096), dtype=np.float32)],
         outputs=[ct.TensorType(name='function_logits', dtype=np.float32)],
-        compute_precision=ct.precision.FLOAT16, minimum_deployment_target=ct.target.iOS18,
+        compute_precision=ct.precision.FLOAT16 if args.precision == 'fp16' else ct.precision.FLOAT32, minimum_deployment_target=ct.target.iOS18,
         compute_units=ct.ComputeUnit.CPU_ONLY)
     mlmodel.short_description = 'SongFormer worship-v3 label pipeline; frozen dataset ID 5; encoder features required.'
+    mlmodel.user_defined_metadata['precision'] = args.precision
     mlmodel.user_defined_metadata['checkpoint_sha256'] = sha_file(checkpoint)
     mlmodel.user_defined_metadata['allowed_label_ids'] = ','.join(map(str, CLASS_IDS))
     mlmodel.user_defined_metadata['input_contract'] = 'float32 [1,T,4096], T divisible by 3, 3<=T<=10500'
@@ -113,7 +125,7 @@ def main():
     passed = all(c['passed'] for c in checks)
     write(out / 'export_report.json', {
         'checkpoint': str(checkpoint), 'checkpoint_sha256': sha_file(checkpoint),
-        'package': str(package), 'fp16_synthetic_parity_passed': passed,
+        'package': str(package), 'precision': args.precision, 'synthetic_parity_passed': passed,
         'ready_for_app_integration': False, 'attention_modules_changed': changes,
         'checks': checks, 'torch': torch.__version__, 'coremltools': ct.__version__,
         'x_transformers': importlib.metadata.version('x-transformers'),
@@ -121,7 +133,7 @@ def main():
         'feature_profile': cfg['features'], 'plan_id': data['plan_id'], 'provenance_id': provenance,
         'note': 'Synthetic checks are a smoke test only. Run verify_coreml on real validation caches before compression/integration.'})
     if not passed:
-        raise RuntimeError('FP16 parity failed; package is diagnostic only, do not integrate.')
+        raise RuntimeError(f'{args.precision.upper()} parity failed; package is diagnostic only, do not integrate.')
     print('Export smoke passed:', package, flush=True)
     print('Next: deployment.verify_coreml on real validation caches, including full 420s chunks.')
 

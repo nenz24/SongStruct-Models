@@ -5,7 +5,7 @@ import platform
 import numpy as np
 import torch
 from deployment.export_coreml import FunctionLogitsWrapper, parity
-from finetuning.common import CLASS_IDS, config, iter_features, load_head, sha_file, write
+from finetuning.common import CLASS_IDS, config, fingerprint, iter_features, load_head, sha_file, write
 from finetuning.engine import evaluate, manifest
 
 
@@ -32,6 +32,9 @@ def main():
     parser.add_argument('--checkpoint', type=Path, default=Path('outputs.local/finetuning/runs/worship-v3/best.pt'))
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--limit', type=int, default=1, help='Validation tracks; 0=all')
+    parser.add_argument('--diagnostic', action='store_true',
+                        help='Write full diagnostics without failing solely on finite logit tolerance mismatch; does not approve model.')
+    parser.add_argument('--candidate-name', default=None, help='Report label, e.g. fp16 or fp32; metadata precision remains separate')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if platform.system() != 'Darwin':
@@ -60,6 +63,7 @@ def main():
         raise ValueError('Core ML package checkpoint hash does not match reference.')
     adapter = CoreMLAdapter(mlmodel)
     checks = []
+    candidate_name = args.candidate_name or mlmodel.user_defined_metadata.get('precision', 'unknown')
     with torch.inference_mode():
         for row in rows:
             print('Parity:', row['track_id'], flush=True)
@@ -78,16 +82,24 @@ def main():
     full = len(rows) == sum(r['approved'] and r['split'] == 'val' for r in data['records'])
     passed = all(c['passed'] for c in checks)
     write(output, {'tracks': len(rows), 'full_validation': full, 'plan_id': data['plan_id'],
-        'provenance_id': provenance, 'checkpoint_sha256': expected, 'package': str(package),
+        'provenance_id': provenance,
+        'annotations_id': fingerprint([(r['track_id'], r.get('sections', [])) for r in rows]),
+        'checkpoint_sha256': expected, 'package': str(package),
         'logit_parity_passed': passed, 'section_prediction_agreement': agreement,
-        'pytorch': baseline, 'coreml_fp16': converted,
+        'pytorch': baseline, 'coreml': converted,
+        **({'coreml_fp16': converted} if candidate_name == 'fp16' else {}),
+        'candidate_name': candidate_name, 'precision_metadata': mlmodel.user_defined_metadata.get('precision'),
+        'diagnostic_only': args.diagnostic,
+        'status': 'numerically_consistent' if passed else 'numerical_mismatch_requires_review',
         'macro_f1_delta': converted['macro_f1_present'] - baseline['macro_f1_present'],
         'chunk_checks': checks,
         'ready_for_app_integration': False,
         'note': 'Head parity only. Encoder parity, section-pooling app implementation and iPhone measurements remain required.'})
     print(f'Section agreement={agreement:.4%}; F1 delta={converted["macro_f1_present"]-baseline["macro_f1_present"]:+.6f}')
     print('Report:', output)
-    if not passed:
+    if not passed and args.diagnostic:
+        print('DIAGNOSTIC ONLY: numerical parity FAILED. Completed report is not an integration approval.')
+    if not passed and not args.diagnostic:
         raise RuntimeError('Real-feature logit parity failed; inspect report before compression/integration.')
 
 

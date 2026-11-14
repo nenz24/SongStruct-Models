@@ -72,3 +72,27 @@ rtol=.02 are provisional numerical smoke tolerances, not an accuracy guarantee;
 inspect the validation F1 delta and individual class changes as well.
 Full encoder preprocessing parity and iPhone compute-unit behavior remain
 separate checks. This stage does not quantize weights or claim a 6-bit artifact.
+
+## Diagnose FP16 drift with FP32
+
+Open `coreml_precision_comparison.ipynb`. Reuse the existing FP16 package, export
+a new package with `--precision fp32` to a separate directory, and run
+`verify_coreml --diagnostic --limit 0` for both on the same validation inventory.
+`--diagnostic` suppresses only the final exception for finite numerical tolerance
+mismatch. It does not relax atol/rtol or mark a candidate approved; reports retain
+`logit_parity_passed=false`, mismatch status and `ready_for_app_integration=false`.
+Shape, non-finite outputs, checkpoint mismatch and runtime errors still stop the
+process. The default verifier remains strict.
+
+Reports now include all-logit and allowed-class-logit checks, probability max/mean
+errors after 8-class softmax, per-frame argmax agreement, section agreement, and
+validation F1/confusion matrices. The generic metrics key is `coreml` for both
+precisions. `coreml_fp16` remains an alias only when candidate name is fp16.
+Precision is recorded in new export metadata; old FP16 exports have no precision
+metadata, so `--candidate-name fp16` is an informational label only.
+
+The notebook checks plan, provenance, annotation identity and checkpoint equality
+before comparing reports. FP32 closer than FP16 would support a precision-related
+explanation; drift in both calls for investigating attention/export paths on real
+long chunks. Neither outcome alone proves a cause. Full-model encoder parity and
+physical-iPhone performance are still separate from head validation.
