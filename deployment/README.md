@@ -177,3 +177,29 @@ native float32 C-order [1,T,4096] array before Core ML prediction. A read-only
 mmap/newaxis view can fail at the Python/Core ML value bridge even when its
 shape/dtype are correct. The source cache is never modified. Input buffer
 metadata is printed for diagnosis; feature contents are not logged.
+
+## Impact of encoder conversion on section accuracy
+
+Open `coreml_encoder_pipeline_experiment.ipynb`. Both branches use the same
+verified, uncompressed FP32 Core ML head, approved eligible targets and original
+section-probability pooling. The reference branch reads the frozen PyTorch
+encoder cache. The candidate branch runs the five existing app frontend/encoder
+packages with librosa-decoded audio, 30/120s encoder windows, and 420s head blocks.
+Thus this isolates encoder conversion impact from head conversion/compression.
+It is not yet Swift decoding, app bar snapping/merging, or iPhone latency parity.
+
+Start with one complete song, then all validation. Core ML features are written
+to a separate `outputs.local/coreml-encoder-cache`; frozen training features,
+labels and checkpoints are unchanged. The cache is keyed by actual hashes of
+encoder packages/manifest, feature profile, coremltools/librosa versions, audio
+hash and CPU compute units. Completed tracks are reused after interruption;
+changed provenance requires a new --cache-dir. Partial tracks are regenerated.
+Allow several GiB additional disk for validation caches, with an upfront free-
+space check. No encoders are downloaded or retrained.
+
+Reports compare F1, per-class metrics, confusion matrices, coverage and section
+prediction agreement, and list changed sections. Full-validation annotations,
+split and source-cache provenance must match the prior FP32 proof. Prediction
+component timings cover newly encoded tracks in this run only, exclude many
+other costs, and are not iPhone/end-to-end timings. A diagnostic result is not
+an automatic app-integration approval or a compressed-encoder result.

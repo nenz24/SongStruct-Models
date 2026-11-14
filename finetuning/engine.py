@@ -147,16 +147,17 @@ def metrics_from_sections(predictions):
             'label_order': list(LABELS), 'confusion_matrix': matrix}
 
 
-def evaluate(model, records, cfg, target, provenance_id, details=None):
+def evaluate(model, records, cfg, target, provenance_id, details=None, feature_reader=None):
     import torch
     model.eval()
     predictions = []
+    read_features = feature_reader or iter_features
     with torch.inference_mode():
         for row in records:
             sections = row['sections']
             sums = [[0.0] * len(LABELS) for _ in sections]
             coverage = [0.0] * len(sections)
-            for values, offset, provenance in iter_features(cfg, row):
+            for values, offset, provenance in read_features(cfg, row):
                 if provenance != provenance_id:
                     raise ValueError('Mixed feature provenance.')
                 scores = logits(model, values, target)
