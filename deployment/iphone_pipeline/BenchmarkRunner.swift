@@ -54,6 +54,73 @@ actor BenchmarkRunner {
         // Ensure autoreleased Core ML objects from a completed run are drained before the next run.
         return try autoreleasepool { try execute(progress: progress) }
     }
+    func runBatch(progress: @escaping @Sendable (String) -> Void) async throws -> String {
+        let destination = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pipeline-batch-latest.json")
+        let batchID = UUID().uuidString
+        var runs = [[String: Any]]()
+        var status = "running"
+        var activeRun = 0
+        func persist() throws -> String {
+            let summary: [String: Any] = ["batch_id":batchID,"requested_runs":3,"completed_runs":runs.filter { ($0["state"] as? String) == "completed" }.count,
+                "state":status,"active_run":activeRun,"runs":runs,"idle_seconds_between_runs":2,
+                "note":"Same process, three sequential runs with two-second idle gaps. Persistent partial report survives OS termination. Footprint samples are not peak memory; diagnostic overhead is included. No automatic integration approval."]
+            let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted,.sortedKeys])
+            try data.write(to: destination, options: .atomic)
+            return String(decoding:data,as:UTF8.self)
+        }
+        _ = try persist()
+        for index in 1...3 {
+            activeRun = index
+            _ = try persist()
+            var entry: [String: Any] = ["run_index":index,"started_at":ISO8601DateFormatter().string(from:Date())]
+            if let bytes = footprint() { entry["footprint_before_run_bytes"] = bytes }
+            var runSaved = false
+            do {
+                let compact: [String: Any] = try autoreleasepool {
+                    let json = try run { message in progress("Run \(index)/3: " + message) }
+                    guard var report = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                        throw failure("Invalid run report")
+                    }
+                    if var stages = report["stage_diagnostics"] as? [String: Any] {
+                        if let rows = stages["stages"] as? [[String: Any]] {
+                            stages["stage_fingerprints"] = rows.map { row in
+                                row.filter { $0.key != "samples" && $0.key != "sample_indices" }
+                            }
+                        }
+                        stages.removeValue(forKey:"stages")
+                        stages["batch_note"] = "Full samples omitted from batch; hashes, per-stage comparisons and sampled errors retained."
+                        report["stage_diagnostics"] = stages
+                    }
+                    return report
+                }
+                entry["report"] = compact
+                entry["state"] = "completed"
+                if let bytes = footprint() { entry["footprint_after_run_bytes"] = bytes }
+                runs.append(entry); runSaved = true
+                _ = try persist()
+                // Releasing a model may leave runtime caches; measure after a documented idle gap as well.
+                if index < 3 {
+                    progress("Run \(index)/3 completed; idle 2 seconds")
+                    try await Task.sleep(nanoseconds:2_000_000_000)
+                    if let bytes = footprint() { entry["footprint_after_idle_bytes"] = bytes }
+                }
+                runs[runs.count-1] = entry
+                _ = try persist()
+            } catch {
+                entry["state"] = "failed"
+                entry["error"] = String(describing:error)
+                if let bytes = footprint() { entry["footprint_after_error_bytes"] = bytes }
+                if runSaved { runs[runs.count-1] = entry } else { runs.append(entry) }
+                status = "failed"
+                progress("Batch stopped: " + error.localizedDescription)
+                return try persist()
+            }
+        }
+        activeRun = 0; status = "completed"
+        progress("Batch complete: three reports saved")
+        return try persist()
+    }
     private func execute(progress: @escaping @Sendable (String) -> Void) throws -> String {
         let checkpointURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pipeline-last-stage.json")

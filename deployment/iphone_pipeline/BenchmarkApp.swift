@@ -9,6 +9,7 @@ struct BenchmarkView: View {
     @State private var text = "Full PCM pipeline (routing selected by benchmark manifest). Keep this app open while running. Models and real audio are bundled."
     @State private var reportURL: URL?
     @State private var diagnosticURL: URL?
+    @State private var batchURL: URL?
     let runner = BenchmarkRunner()
     var body: some View {
         NavigationStack {
@@ -33,14 +34,34 @@ struct BenchmarkView: View {
                         }
                     }
                 }.disabled(running)
+                Button("Run 3 times automatically") {
+                    running = true; reportURL = nil; batchURL = nil; progress = "Starting batch…"
+                    UIApplication.shared.isIdleTimerDisabled = true
+                    Task {
+                        defer { running = false; UIApplication.shared.isIdleTimerDisabled = false }
+                        do {
+                            text = try await runner.runBatch { message in
+                                Task { @MainActor in progress = message }
+                            }
+                            batchURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                                .appendingPathComponent("pipeline-batch-latest.json")
+                        } catch {
+                            progress = "Batch failed: " + error.localizedDescription
+                            text = String(describing:error)
+                        }
+                    }
+                }.disabled(running)
                 Text(progress).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 if let reportURL { ShareLink("Share JSON report", item: reportURL) }
                 if let diagnosticURL { ShareLink("Share last recorded stage", item: diagnosticURL) }
+                if let batchURL { ShareLink("Share batch report", item: batchURL) }
                 ScrollView { Text(text).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
             }.padding().navigationTitle("Song pipeline benchmark")
                 .task {
                     let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent("pipeline-last-stage.json")
+                    let batch = url.deletingLastPathComponent().appendingPathComponent("pipeline-batch-latest.json")
+                    if FileManager.default.fileExists(atPath:batch.path) { batchURL = batch }
                     if FileManager.default.fileExists(atPath: url.path) {
                         diagnosticURL = url
                         if let saved = try? String(contentsOf: url, encoding: .utf8) { text = "Last recorded stage (not a crash diagnosis):\n" + saved }
