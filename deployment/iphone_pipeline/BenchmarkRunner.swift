@@ -46,7 +46,12 @@ actor BenchmarkRunner {
     func input(_ values: [Float], _ shape: [Int]) -> MLMultiArray {
         MLMultiArray(MLShapedArray<Float>(scalars: values, shape: shape))
     }
-    func run() throws -> String {
+    func run(progress: @escaping @Sendable (String) -> Void) throws -> String {
+        func emit(_ message: String) {
+            NSLog("PIPELINE %@", message)
+            progress(message)
+        }
+        emit("START: reading manifest and PCM")
         let bundle = Bundle.main
         guard let url = bundle.url(forResource: "benchmark_manifest", withExtension: "json"),
               let audioURL = bundle.url(forResource: "audio", withExtension: "f32") else { throw failure("Missing resources") }
@@ -69,17 +74,21 @@ actor BenchmarkRunner {
         var models: [String: MLModel] = [:]
         for role in ["log_mel","musicfm_conv","musicfm","muq_conv","muq","head"] {
             guard let path = bundle.url(forResource: role, withExtension: "mlmodelc") else { throw failure("Missing \(role)") }
+            emit("LOAD_START: \(role)")
             models[role] = try MLModel(contentsOf: path, configuration: config)
+            emit("LOAD_DONE: \(role)")
         }
         let loadSeconds = ProcessInfo.processInfo.systemUptime - loadStart
         if let b = footprint() { snapshots.append(b) }
         var timings: [String: Double] = [:], calls: [String: Int] = [:]
         func predict(_ role: String, _ inputs: [String: MLMultiArray]) throws -> MLMultiArray {
             let started = ProcessInfo.processInfo.systemUptime
+            emit("PREDICT_START: \(role), call \((calls[role] ?? 0) + 1)")
             let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
             let result = try models[role]!.prediction(from: provider)
             timings[role, default: 0] += ProcessInfo.processInfo.systemUptime - started
             calls[role, default: 0] += 1
+            emit("PREDICT_DONE: \(role), \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s")
             guard let key = result.featureNames.sorted().first,
                   let output = result.featureValue(for: key)?.multiArrayValue else { throw failure("Missing output \(role)") }
             return output
@@ -87,6 +96,7 @@ actor BenchmarkRunner {
         func first(_ role: String) -> String { models[role]!.modelDescription.inputDescriptionsByName.keys.sorted().first! }
         var windows: [[String: Any]] = []
         func pair(_ audio: [Float], _ offset: Int, _ seconds: Int) throws -> [[Float]] {
+            emit("WINDOW: start=\(Double(offset)/24000)s, length=\(Double(audio.count)/24000)s, stream=\(seconds)s")
             let n = audio.count
             var padded = [Float](); padded.reserveCapacity(n + 2048)
             for i in -1024..<(n+1024) {
@@ -140,6 +150,7 @@ actor BenchmarkRunner {
             guard let minimum = lengths.min(), let maximum = lengths.max(), maximum-minimum <= 4 else { throw failure("Stream lengths diverged") }
             let frames = minimum/3*3
             guard frames >= 3, frames <= 10500 else { throw failure("Invalid fused frame count") }
+            emit("FUSE: \(frames) frames; then head and section pooling")
             var fused = [Float](repeating: 0,count: frames*4096)
             for t in 0..<frames {
                 for stream in 0..<4 {
@@ -164,7 +175,7 @@ actor BenchmarkRunner {
                 }
             }
             if let b = footprint() { snapshots.append(b) }
-            print("PIPELINE_HEAD_CHUNK_DONE offset=\(headOffset) frames=\(frames)")
+            emit("HEAD_CHUNK_DONE: offset=\(headOffset), frames=\(frames)")
         }
         let inferenceSeconds = ProcessInfo.processInfo.systemUptime - begin
         var sections = [[String: Any]](), agreement = 0, correct = 0, lowCoverage = 0
@@ -195,6 +206,7 @@ actor BenchmarkRunner {
             "thermal_before":thermalBefore,"thermal_after":ProcessInfo.processInfo.thermalState.rawValue,"low_power_mode":lowPower,
             "source_validation_sha256":m.source_validation_sha256,"scope":m.scope,"shape_policy":m.shape_policy,
             "ready_for_app_integration":false]
+        emit("DONE: preparing JSON report")
         return String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]),as:UTF8.self)
     }
 }
