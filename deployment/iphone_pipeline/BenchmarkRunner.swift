@@ -50,11 +50,30 @@ actor BenchmarkRunner {
         MLMultiArray(MLShapedArray<Float>(scalars: values, shape: shape))
     }
     func run(progress: @escaping @Sendable (String) -> Void) throws -> String {
+        // Ensure autoreleased Core ML objects from a completed run are drained before the next run.
+        return try autoreleasepool { try execute(progress: progress) }
+    }
+    private func execute(progress: @escaping @Sendable (String) -> Void) throws -> String {
+        let checkpointURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pipeline-last-stage.json")
+        let runID = UUID().uuidString
         func emit(_ message: String) {
             NSLog("PIPELINE %@", message)
             progress(message)
+            if message.hasPrefix("START") || message.hasPrefix("WINDOW") || message.hasPrefix("FUSE") ||
+                message.hasPrefix("MEMORY") || message.hasPrefix("HEAD_CHUNK_DONE") || message.hasPrefix("DONE") {
+                var checkpoint: [String: Any] = ["run_id":runID,"last_stage":message,
+                    "recorded_at":ISO8601DateFormatter().string(from: Date()),
+                    "state":message.hasPrefix("DONE") ? "completed" : "running",
+                    "note":"Last recorded stage only; this file does not determine the OS termination reason."]
+                if let bytes = footprint() { checkpoint["process_footprint_bytes"] = bytes }
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: checkpoint, options: [.prettyPrinted,.sortedKeys])
+                    try data.write(to: checkpointURL, options: .atomic)
+                } catch { NSLog("PIPELINE checkpoint write failed: %@", error.localizedDescription) }
+            }
         }
-        emit("START v2 dtype bridge: reading manifest and PCM")
+        emit("START v3 staged memory: reading manifest and PCM")
         let bundle = Bundle.main
         guard let url = bundle.url(forResource: "benchmark_manifest", withExtension: "json"),
               let audioURL = bundle.url(forResource: "audio", withExtension: "f32") else { throw failure("Missing resources") }
@@ -78,9 +97,11 @@ actor BenchmarkRunner {
         var models: [String: MLModel] = [:]
         var activeEncoderResource: [String: String] = [:]
         var encoderLoadSeconds = 0.0
+        var stagedLoadSeconds = 0.0
+        var memoryEvents = [[String: Any]]()
         var encoderLoadEvents = [[String: Any]]()
         for role in ["log_mel","musicfm_conv","musicfm","muq_conv","muq","head"] {
-            if hybrid && (role == "musicfm" || role == "muq") { continue }
+            if hybrid && (role == "musicfm" || role == "muq" || role == "head") { continue }
             guard let path = bundle.url(forResource: role, withExtension: "mlmodelc") else { throw failure("Missing \(role)") }
             emit("LOAD_START: \(role)")
             models[role] = try MLModel(contentsOf: path, configuration: config)
@@ -88,12 +109,28 @@ actor BenchmarkRunner {
         }
         let loadSeconds = ProcessInfo.processInfo.systemUptime - loadStart
         if let b = footprint() { snapshots.append(b) }
+        func memoryEvent(_ stage: String) {
+            if let bytes = footprint() {
+                snapshots.append(bytes)
+                memoryEvents.append(["stage":stage,"bytes":bytes])
+                emit("MEMORY: \(stage), \(bytes) bytes")
+            }
+        }
+        func loadCPU(_ role: String) throws {
+            if models[role] != nil { return }
+            guard let path = bundle.url(forResource: role, withExtension: "mlmodelc") else { throw failure("Missing \(role)") }
+            emit("STAGED_LOAD_START: \(role), cpuOnly")
+            let started = ProcessInfo.processInfo.systemUptime
+            models[role] = try MLModel(contentsOf: path, configuration: config)
+            stagedLoadSeconds += ProcessInfo.processInfo.systemUptime - started
+            emit("STAGED_LOAD_DONE: \(role)")
+        }
         var timings: [String: Double] = [:], calls: [String: Int] = [:]
         func predict(_ role: String, _ inputs: [String: MLMultiArray]) throws -> MLMultiArray {
             let started = ProcessInfo.processInfo.systemUptime
             emit("PREDICT_START: \(role), call \((calls[role] ?? 0) + 1)")
             let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
-            let result = try models[role]!.prediction(from: provider)
+            let result = try autoreleasepool { try models[role]!.prediction(from: provider) }
             timings[role, default: 0] += ProcessInfo.processInfo.systemUptime - started
             calls[role, default: 0] += 1
             emit("PREDICT_DONE: \(role), \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s")
@@ -133,6 +170,7 @@ actor BenchmarkRunner {
         }
         var windows: [[String: Any]] = []
         func pair(_ audio: [Float], _ offset: Int, _ seconds: Int) throws -> [[Float]] {
+            return try autoreleasepool {
             emit("WINDOW: start=\(Double(offset)/24000)s, length=\(Double(audio.count)/24000)s, stream=\(seconds)s")
             let n = audio.count
             var padded = [Float](); padded.reserveCapacity(n + 2048)
@@ -168,6 +206,7 @@ actor BenchmarkRunner {
                 windows.append(["encoder":role,"start_sample":offset,"samples":n,"stream_seconds":seconds,"frames":frames,"route":route])
             }
             return results
+            }
         }
         var sums = Array(repeating: Array(repeating: 0.0, count: 8), count: m.sections.count)
         var covered = Array(repeating: 0.0, count: m.sections.count)
@@ -176,6 +215,9 @@ actor BenchmarkRunner {
         for headOffset in stride(from: 0, to: audio.count, by: headStep) {
             let end = min(audio.count, headOffset+headStep)
             if end-headOffset <= 2048 { break }
+            if hybrid {
+                for role in ["log_mel","musicfm_conv","muq_conv"] { try loadCPU(role) }
+            }
             var streams = [[Float]]()
             for seconds in [30,m.long_window_seconds] {
                 var fm = [Float](), muq = [Float]()
@@ -198,9 +240,29 @@ actor BenchmarkRunner {
                     fused.replaceSubrange((t*4096+stream*1024)..<(t*4096+(stream+1)*1024),with: streams[stream][(t*1024)..<((t+1)*1024)])
                 }
             }
-            let result = try predict("head",["input_embeddings":input(fused,[1,frames,4096])])
+            streams.removeAll(keepingCapacity: false)
+            guard fused.allSatisfy({ $0.isFinite }) else { throw failure("NaN/Inf in fused head input") }
+            let headInput = input(fused,[1,frames,4096])
+            fused.removeAll(keepingCapacity: false)
+            memoryEvent("before_head_release")
+            if hybrid {
+                autoreleasepool {
+                    for role in ["musicfm","muq","log_mel","musicfm_conv","muq_conv"] {
+                        models.removeValue(forKey: role)
+                    }
+                    activeEncoderResource.removeAll()
+                }
+                memoryEvent("after_encoder_release")
+                try loadCPU("head")
+            }
+            memoryEvent("before_head_prediction")
+            let result = try predict("head",["input_embeddings":headInput])
             guard result.shape.map({$0.intValue}) == [1,frames/3,128] else { throw failure("Invalid head output shape") }
             let logits = try floats(result)
+            if hybrid {
+                autoreleasepool { _ = models.removeValue(forKey: "head") }
+                memoryEvent("after_head_release")
+            }
             for t in 0..<(frames/3) {
                 let selected = m.class_ids.map { Double(logits[t*128+$0]) }
                 let maximum = selected.max()!
@@ -238,7 +300,9 @@ actor BenchmarkRunner {
         let machine = withUnsafePointer(to: &system.machine) { ptr in ptr.withMemoryRebound(to: CChar.self,capacity: 1) { String(cString:$0) } }
         let report: [String: Any] = ["track_id":m.track_id,"hardware_identifier":machine,
             "os":ProcessInfo.processInfo.operatingSystemVersionString,"requested_compute_units":hybrid ? "hybrid_all_static_cpu_tail" : "cpuOnly",
-            "encoder_model_load_seconds_during_pipeline":encoderLoadSeconds,"encoder_load_events":encoderLoadEvents,
+            "encoder_model_load_seconds_during_pipeline":encoderLoadSeconds,
+            "staged_cpu_model_load_seconds_during_pipeline":stagedLoadSeconds,"memory_events":memoryEvents,
+            "diagnostic_note":"Includes stage checkpoint writes; compare speed again after stability is established.","encoder_load_events":encoderLoadEvents,
             "total_load_and_pcm_pipeline_seconds":loadSeconds+inferenceSeconds,
             "model_load_seconds":loadSeconds,"pcm_pipeline_seconds":inferenceSeconds,
             "audio_seconds":Double(audio.count)/Double(m.sample_rate),"prediction_seconds_by_component":timings,

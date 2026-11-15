@@ -8,6 +8,7 @@ struct BenchmarkView: View {
     @State private var progress = "Ready"
     @State private var text = "Full PCM pipeline (routing selected by benchmark manifest). Keep this app open while running. Models and real audio are bundled."
     @State private var reportURL: URL?
+    @State private var diagnosticURL: URL?
     let runner = BenchmarkRunner()
     var body: some View {
         NavigationStack {
@@ -34,8 +35,17 @@ struct BenchmarkView: View {
                 }.disabled(running)
                 Text(progress).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 if let reportURL { ShareLink("Share JSON report", item: reportURL) }
+                if let diagnosticURL { ShareLink("Share last recorded stage", item: diagnosticURL) }
                 ScrollView { Text(text).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
             }.padding().navigationTitle("Song pipeline benchmark")
+                .task {
+                    let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("pipeline-last-stage.json")
+                    if FileManager.default.fileExists(atPath: url.path) {
+                        diagnosticURL = url
+                        if let saved = try? String(contentsOf: url, encoding: .utf8) { text = "Last recorded stage (not a crash diagnosis):\n" + saved }
+                    }
+                }
         }
     }
 }
