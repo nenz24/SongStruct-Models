@@ -38,6 +38,9 @@ def validate_source(proof, original, baseline):
     if (proof.get('source_kind') != 'original_training_snapshot' or
             proof.get('compute_precision') != 'float32' or not proof.get('source_window_passed')):
         raise ValueError('Verified original-snapshot MuQ FP32 export required.')
+    scheme=proof.get('compression_scheme')
+    if scheme and (scheme not in ('int8','palette6') or not proof.get('source_full_validation') or not proof.get('window_finite_passed')):
+        raise ValueError('Compressed MuQ requires fully validated source and finite fixture checks.')
     for key in ('muq_repo','muq_revision'):
         if proof[key] != original[key]:
             raise ValueError('MuQ snapshot differs from training: '+key)
@@ -103,6 +106,19 @@ def main():
     package=Path(proof['package']).expanduser().resolve()
     if not package.is_dir():raise ValueError('MuQ package missing.')
     enc.package_paths['muq']=package
+    scheme=proof.get('compression_scheme','fp32')
+    source_validation=None
+    if scheme!='fp32':
+        from deployment.compress_muq import package_digest
+        if package_digest(package)!=proof['package_digest']:raise ValueError('Compressed MuQ package changed.')
+        source_path=Path(proof['source_validation_report'])
+        if sha_file(source_path)!=proof['source_validation_report_sha256']:raise ValueError('MuQ source validation report changed.')
+        source_validation=read(source_path)
+        if (not source_validation.get('full_validation') or source_validation.get('muq_scheme')!='fp32' or
+                source_validation['muq_export_report_sha256']!=proof['source_report_sha256'] or
+                source_validation['baseline_combination_sha256']!=sha_file(baseline_path) or
+                source_validation['annotations_id']!=annotations):
+            raise ValueError('Compressed MuQ source validation or fixed combination differs.')
     identity={'baseline_encoder_id':old['id'],'muq_export_report_sha256':sha_file(proof_path),
         'muq_package_digest':fingerprint([(str(f.relative_to(package)),sha_file(f)) for f in sorted(package.rglob('*')) if f.is_file()]),
         'environment':enc.provenance,'reused_musicfm':True}
@@ -126,8 +142,8 @@ def main():
         md=enc.models['muq'].user_defined_metadata
         for key in ('muq_repo','muq_revision','muq_snapshot_digest'):
             if md.get(key)!=proof[key]:raise ValueError('MuQ package metadata mismatch: '+key)
-        if md.get('precision')!='fp32' or md.get('hidden_state_index')!='10' or md.get('compression_scheme'):
-            raise ValueError('Use the uncompressed FP32 MuQ source.')
+        if md.get('precision')!='fp32' or md.get('hidden_state_index')!='10' or md.get('compression_scheme')!=proof.get('compression_scheme'):
+            raise ValueError('MuQ package precision/scheme mismatch.')
     def encode(audio):
         mel=enc.predict('log_mel',{enc.first_input('log_mel'):np.pad(audio,(1024,1024),mode='reflect')[None]})
         conv=enc.predict('muq_conv',{enc.first_input('muq_conv'):mel})
@@ -180,10 +196,14 @@ def main():
         'baseline_combination_sha256':sha_file(baseline_path),'baseline_metrics':reference,'metrics':metrics,
         'macro_f1_delta':metrics['macro_f1_present']-reference['macro_f1_present'],
         'changed_sections':changed,'sections':details,'reused_musicfm':True,'head_scheme':'palette6',
-        'muq_scheme':'fp32','encoder_prediction_timings_this_run':enc.timings,'ready_for_app_integration':False,
+        'muq_scheme':scheme,'encoder_prediction_timings_this_run':enc.timings,'ready_for_app_integration':False,
         'scope':'Mac CPU Core ML with existing app frontend/rotary, cached MusicFM palette6, head palette6 and fixed Apple boundaries. Not iPhone or end-to-end timing.'}
+    if source_validation:
+        report['source_fp32_metrics']=source_validation['metrics']
+        report['macro_f1_delta_from_source_fp32']=metrics['macro_f1_present']-source_validation['metrics']['macro_f1_present']
+        report['source_validation_report']=proof['source_validation_report']
     write(output,report)
-    print(f'MuQ FP32 F1={metrics["macro_f1_present"]:.6f}; accuracy={metrics["section_accuracy"]:.4%}; delta={report["macro_f1_delta"]:+.6f}')
+    print(f'MuQ {scheme} F1={metrics["macro_f1_present"]:.6f}; accuracy={metrics["section_accuracy"]:.4%}; delta={report["macro_f1_delta"]:+.6f}')
     print('Report:',output)
 
 
