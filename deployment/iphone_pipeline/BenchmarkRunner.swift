@@ -38,8 +38,9 @@ actor BenchmarkRunner {
         return code == KERN_SUCCESS ? info.phys_footprint : nil
     }
     func floats(_ a: MLMultiArray) throws -> [Float] {
-        guard a.dataType == .float32 else { throw failure("Expected FLOAT32 output") }
-        let result = MLShapedArray<Float>(a).scalars
+        // Match Python native_input: convert frontend FP16/FP32 outputs explicitly.
+        // The converting initializer also copies strided arrays into canonical order.
+        let result = MLShapedArray<Float>(converting: a).scalars
         guard result.allSatisfy({ $0.isFinite }) else { throw failure("NaN/Inf output") }
         return result
     }
@@ -51,7 +52,7 @@ actor BenchmarkRunner {
             NSLog("PIPELINE %@", message)
             progress(message)
         }
-        emit("START: reading manifest and PCM")
+        emit("START v2 dtype bridge: reading manifest and PCM")
         let bundle = Bundle.main
         guard let url = bundle.url(forResource: "benchmark_manifest", withExtension: "json"),
               let audioURL = bundle.url(forResource: "audio", withExtension: "f32") else { throw failure("Missing resources") }
@@ -91,6 +92,7 @@ actor BenchmarkRunner {
             emit("PREDICT_DONE: \(role), \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s")
             guard let key = result.featureNames.sorted().first,
                   let output = result.featureValue(for: key)?.multiArrayValue else { throw failure("Missing output \(role)") }
+            emit("OUTPUT: \(role), shape=\(output.shape), dtype=\(output.dataType.rawValue), strides=\(output.strides)")
             return output
         }
         func first(_ role: String) -> String { models[role]!.modelDescription.inputDescriptionsByName.keys.sorted().first! }
@@ -103,14 +105,16 @@ actor BenchmarkRunner {
                 let index = i < 0 ? -i : (i >= n ? 2*n-2-i : i)
                 padded.append(audio[index])
             }
-            let mel = try predict("log_mel", [first("log_mel"): input(padded,[1,n+2048])])
-            _ = try floats(mel)
+            let melOutput = try predict("log_mel", [first("log_mel"): input(padded,[1,n+2048])])
+            let mel = input(try floats(melOutput), melOutput.shape.map { $0.intValue })
             var results = [[Float]]()
             for role in ["musicfm","muq"] {
-                let conv = try predict(role+"_conv", [first(role+"_conv"): mel])
-                let shape = conv.shape.map { $0.intValue }
-                guard shape.count == 3, shape[0] == 1, shape[2] == 1024 else { throw failure("Bad conv shape") }
-                _ = try floats(conv)
+                let convOutput = try predict(role+"_conv", [first(role+"_conv"): mel])
+                let shape = convOutput.shape.map { $0.intValue }
+                guard shape.count == 3, shape[0] == 1, shape[2] == 1024 else { throw failure("Bad \(role) conv shape: \(shape)") }
+                emit("READ_CONV: \(role), converting frontend output to Float32")
+                let conv = input(try floats(convOutput), shape)
+                emit("READ_CONV_DONE: \(role)")
                 let frames = shape[1]
                 guard let frequencies = m.rotary_inv_freq[role], frequencies.count == 32 else { throw failure("Invalid rotary") }
                 var rotary = [Float](repeating: 0, count: 2*frames*64)

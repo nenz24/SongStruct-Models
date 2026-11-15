@@ -24,7 +24,12 @@ struct BenchmarkView: View {
                             let url = FileManager.default.temporaryDirectory.appendingPathComponent("pipeline-benchmark-\(UUID().uuidString).json")
                             try text.write(to: url, atomically: true, encoding: .utf8)
                             reportURL = url
-                        } catch { text = error.localizedDescription }
+                        } catch {
+                            let message = "FAILED: \(error.localizedDescription)"
+                            NSLog("PIPELINE %@", message)
+                            progress = message
+                            text = String(describing: error)
+                        }
                     }
                 }.disabled(running)
                 Text(progress).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
