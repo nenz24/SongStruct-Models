@@ -1,5 +1,6 @@
 import Foundation
 import CoreML
+import CryptoKit
 import Darwin
 
 actor BenchmarkRunner {
@@ -73,11 +74,70 @@ actor BenchmarkRunner {
                 } catch { NSLog("PIPELINE checkpoint write failed: %@", error.localizedDescription) }
             }
         }
-        emit("START v3 staged memory: reading manifest and PCM")
+        emit("START v4 stage fingerprints: reading manifest and PCM")
         let bundle = Bundle.main
         guard let url = bundle.url(forResource: "benchmark_manifest", withExtension: "json"),
               let audioURL = bundle.url(forResource: "audio", withExtension: "f32") else { throw failure("Missing resources") }
-        let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))
+        let manifestData = try Data(contentsOf: url)
+        let m = try JSONDecoder().decode(Manifest.self, from: manifestData)
+        let traceIdentity = "stage-v1-" + SHA256.hash(data: manifestData).map { String(format: "%02x", $0) }.joined()
+        let baselineURL = checkpointURL.deletingLastPathComponent().appendingPathComponent("pipeline-stage-baseline.json")
+        var baselineRows = [[String: Any]]()
+        if let saved = try? Data(contentsOf: baselineURL),
+           let object = try? JSONSerialization.jsonObject(with: saved) as? [String: Any],
+           object["identity"] as? String == traceIdentity {
+            baselineRows = object["stages"] as? [[String: Any]] ?? []
+        }
+        let baselineByKey = Dictionary(baselineRows.compactMap { row -> (String,[String: Any])? in
+            guard let key = row["key"] as? String else { return nil }; return (key,row)
+        }, uniquingKeysWith: { first, _ in first })
+        var stageRows = [[String: Any]]()
+        var stageComparisons = [[String: Any]]()
+        var currentWindowStart = 0, currentStreamSeconds = 0, currentHeadOffset = 0
+        func signature(_ a: MLMultiArray) throws -> [String: Any] {
+            return try autoreleasepool {
+                func summarize(_ values: UnsafeBufferPointer<Float>) throws -> [String: Any] {
+                    guard values.allSatisfy({ $0.isFinite }) else { throw failure("NaN/Inf in diagnostic tensor") }
+                    var hasher = SHA256()
+                    hasher.update(bufferPointer: UnsafeRawBufferPointer(values))
+                    let hash = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+                    let count = min(256,values.count)
+                    let indices = (0..<count).map { $0 * max(0,values.count-1) / max(1,count-1) }
+                    return ["shape":a.shape.map { $0.intValue },"dtype":a.dataType.rawValue,
+                            "count":values.count,"sha256_float32":hash,"sample_indices":indices,
+                            "samples":indices.map { Double(values[$0]) }]
+                }
+                var expected = [Int](), strideValue = 1
+                for dimension in a.shape.reversed() {
+                    expected.insert(strideValue,at:0); strideValue *= dimension.intValue
+                }
+                if a.dataType == .float32 && a.strides.map({ $0.intValue }) == expected {
+                    // Hash the existing contiguous buffer: do not duplicate a 168 MiB head input.
+                    return try summarize(UnsafeBufferPointer(start:a.dataPointer.assumingMemoryBound(to:Float.self),count:a.count))
+                }
+                let values = try floats(a)
+                return try values.withUnsafeBufferPointer { try summarize($0) }
+            }
+        }
+        func record(_ key: String, _ role: String, _ direction: String, _ values: MLMultiArray) throws {
+            let sig = try signature(values)
+            var row = sig
+            row["key"] = key; row["role"] = role; row["direction"] = direction
+            row["head_offset_samples"] = currentHeadOffset
+            row["window_start_sample"] = currentWindowStart
+            row["stream_seconds"] = currentStreamSeconds
+            stageRows.append(row)
+            if let old = baselineByKey[key] {
+                let exact = old["sha256_float32"] as? String == sig["sha256_float32"] as? String
+                let oldSamples = old["samples"] as? [Double] ?? []
+                let newSamples = sig["samples"] as? [Double] ?? []
+                let valid = oldSamples.count == newSamples.count && old["count"] as? Int == sig["count"] as? Int
+                var change: [String: Any] = ["key":key,"role":role,"direction":direction,
+                    "exact_float32_match":exact,"sample_layout_matches":valid]
+                if valid { change["sample_max_abs_error"] = zip(oldSamples,newSamples).map { pair in abs(pair.0-pair.1) }.max() ?? 0 }
+                stageComparisons.append(change)
+            }
+        }
         let hybrid = m.hybrid ?? false
         let data = try Data(contentsOf: audioURL)
         guard data.count == m.audio_samples * 4 else { throw failure("PCM size mismatch") }
@@ -127,8 +187,13 @@ actor BenchmarkRunner {
         }
         var timings: [String: Double] = [:], calls: [String: Int] = [:]
         func predict(_ role: String, _ inputs: [String: MLMultiArray]) throws -> MLMultiArray {
+            let call = (calls[role] ?? 0) + 1
+            let traceKey = "\(role)/\(call)"
+            for key in inputs.keys.sorted() {
+                try record(traceKey+"/input/"+key,role,"input",inputs[key]!)
+            }
             let started = ProcessInfo.processInfo.systemUptime
-            emit("PREDICT_START: \(role), call \((calls[role] ?? 0) + 1)")
+            emit("PREDICT_START: \(role), call \(call)")
             let provider = try MLDictionaryFeatureProvider(dictionary: inputs)
             let result = try autoreleasepool { try models[role]!.prediction(from: provider) }
             timings[role, default: 0] += ProcessInfo.processInfo.systemUptime - started
@@ -137,6 +202,7 @@ actor BenchmarkRunner {
             guard let key = result.featureNames.sorted().first,
                   let output = result.featureValue(for: key)?.multiArrayValue else { throw failure("Missing output \(role)") }
             emit("OUTPUT: \(role), shape=\(output.shape), dtype=\(output.dataType.rawValue), strides=\(output.strides)")
+            try record(traceKey+"/output/"+key,role,"output",output)
             return output
         }
         func first(_ role: String) -> String { models[role]!.modelDescription.inputDescriptionsByName.keys.sorted().first! }
@@ -171,6 +237,7 @@ actor BenchmarkRunner {
         var windows: [[String: Any]] = []
         func pair(_ audio: [Float], _ offset: Int, _ seconds: Int) throws -> [[Float]] {
             return try autoreleasepool {
+            currentWindowStart = offset; currentStreamSeconds = seconds
             emit("WINDOW: start=\(Double(offset)/24000)s, length=\(Double(audio.count)/24000)s, stream=\(seconds)s")
             let n = audio.count
             var padded = [Float](); padded.reserveCapacity(n + 2048)
@@ -213,6 +280,7 @@ actor BenchmarkRunner {
         let begin = ProcessInfo.processInfo.systemUptime
         let headStep = m.head_window_seconds * m.sample_rate
         for headOffset in stride(from: 0, to: audio.count, by: headStep) {
+            currentHeadOffset = headOffset
             let end = min(audio.count, headOffset+headStep)
             if end-headOffset <= 2048 { break }
             if hybrid {
@@ -256,6 +324,7 @@ actor BenchmarkRunner {
                 try loadCPU("head")
             }
             memoryEvent("before_head_prediction")
+            currentWindowStart = headOffset; currentStreamSeconds = 0
             let result = try predict("head",["input_embeddings":headInput])
             guard result.shape.map({$0.intValue}) == [1,frames/3,128] else { throw failure("Invalid head output shape") }
             let logits = try floats(result)
@@ -298,7 +367,20 @@ actor BenchmarkRunner {
         }
         var system = utsname();uname(&system)
         let machine = withUnsafePointer(to: &system.machine) { ptr in ptr.withMemoryRebound(to: CChar.self,capacity: 1) { String(cString:$0) } }
-        let report: [String: Any] = ["track_id":m.track_id,"hardware_identifier":machine,
+        let changedStages = stageComparisons.filter { ($0["exact_float32_match"] as? Bool) != true }
+        let firstChangedInput = stageComparisons.first { ($0["direction"] as? String) == "input" && ($0["exact_float32_match"] as? Bool) != true }
+        let firstChangedOutput = stageComparisons.first { ($0["direction"] as? String) == "output" && ($0["exact_float32_match"] as? Bool) != true }
+        var diagnostics: [String: Any] = ["identity":traceIdentity,"baseline_available":!baselineRows.isEmpty,
+            "stages_compared":stageComparisons.count,"stages_recorded":stageRows.count,
+            "changed_stage_count":changedStages.count,"comparisons":stageComparisons,"stages":stageRows,
+            "note":"Whole-array Float32 SHA detects any bit change; 256 sampled values only estimate magnitude. First successful run becomes fixed baseline, not proof of Mac parity. Diagnostic overhead is included in pipeline timing."]
+        if let firstChangedInput { diagnostics["first_changed_input"] = firstChangedInput }
+        if let firstChangedOutput { diagnostics["first_changed_output"] = firstChangedOutput }
+        if baselineRows.isEmpty {
+            let saved: [String: Any] = ["identity":traceIdentity,"stages":stageRows,"run_id":runID]
+            try JSONSerialization.data(withJSONObject: saved, options: [.sortedKeys]).write(to: baselineURL, options: .atomic)
+        }
+        let report: [String: Any] = ["track_id":m.track_id,"stage_diagnostics":diagnostics,"hardware_identifier":machine,
             "os":ProcessInfo.processInfo.operatingSystemVersionString,"requested_compute_units":hybrid ? "hybrid_all_static_cpu_tail" : "cpuOnly",
             "encoder_model_load_seconds_during_pipeline":encoderLoadSeconds,
             "staged_cpu_model_load_seconds_during_pipeline":stagedLoadSeconds,"memory_events":memoryEvents,
