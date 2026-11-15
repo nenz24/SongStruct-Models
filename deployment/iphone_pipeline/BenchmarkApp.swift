@@ -6,7 +6,7 @@ import UIKit
 struct BenchmarkView: View {
     @State private var running = false
     @State private var progress = "Ready"
-    @State private var text = "CPU-only full PCM pipeline. Keep this app open while running. Models and real audio are bundled."
+    @State private var text = "Full PCM pipeline (routing selected by benchmark manifest). Keep this app open while running. Models and real audio are bundled."
     @State private var reportURL: URL?
     let runner = BenchmarkRunner()
     var body: some View {
@@ -35,7 +35,7 @@ struct BenchmarkView: View {
                 Text(progress).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 if let reportURL { ShareLink("Share JSON report", item: reportURL) }
                 ScrollView { Text(text).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-            }.padding().navigationTitle("Song pipeline CPU")
+            }.padding().navigationTitle("Song pipeline benchmark")
         }
     }
 }

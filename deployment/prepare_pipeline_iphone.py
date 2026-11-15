@@ -21,6 +21,7 @@ def main():
     p.add_argument('--track-id',help='Validation track; default is first available')
     p.add_argument('--config')
     p.add_argument('--team-id')
+    p.add_argument('--hybrid',action='store_true',help='Static ALL for full encoder windows; CPU_ONLY for original-length tails, frontend and head')
     a=p.parse_args()
     if platform.system()!='Darwin':raise RuntimeError('Run on macOS with Xcode.')
     import librosa
@@ -69,19 +70,43 @@ def main():
     h=ct.models.MLModel(str(paths['head']),skip_model_load=True)
     if h.user_defined_metadata.get('compression_scheme')!='palette6' or h.user_defined_metadata.get('checkpoint_sha256')!=v['checkpoint_sha256']:
         raise ValueError('Head metadata mismatch.')
+    static_resources={}
+    if a.hybrid:
+        from deployment.fixed_musicfm import materialize_package
+        from deployment.verify_encoders import rotary
+        from deployment.coreml_features import native_input
+        if len(wav)<120*24000:raise ValueError('Hybrid preparation requires at least 120 seconds of real PCM.')
+        enc.load(('log_mel','musicfm_conv','muq_conv'))
+        for seconds,frames in ((30,750),(120,3000)):
+            audio=wav[:seconds*24000]
+            mel=enc.predict('log_mel',{enc.first_input('log_mel'):np.pad(audio,(1024,1024),mode='reflect')[None]})
+            for role in ('musicfm','muq'):
+                conv=enc.predict(role+'_conv',{enc.first_input(role+'_conv'):mel})
+                if conv.shape!=(1,frames,1024):raise ValueError('Unexpected full-window convolution shape.')
+                inputs={'conv_in':native_input(conv),'rotary':rotary(frames,enc.app['rotary_inv_freq'][role])}
+                resource=f'{role}_{frames}'
+                fixed=out/'FixedPackages'/(resource+'.mlpackage')
+                print('Materializing hybrid:',resource,flush=True)
+                receipt=materialize_package(ct,paths[role],frames,fixed,inputs)
+                write(out/(resource+'-static-shape.json'),receipt)
+                subprocess.run(['xcrun','coremlcompiler','compile',str(fixed),str(assets)],check=True)
+                static_resources[resource]=resource
+        enc.models.clear()
     write(assets/'benchmark_manifest.json',{'track_id':row['track_id'],'sample_rate':24000,
         'audio_samples':len(wav),'head_window_seconds':420,'long_window_seconds':120,
         'rotary_inv_freq':enc.app['rotary_inv_freq'],'labels':list(LABELS),
         'class_ids':[0,1,2,3,4,5,6,26], 'sections':sections,
         'source_validation_sha256':sha_file(validation_path),'audio_pcm_sha256':sha_file(assets/'audio.f32'),
         'package_digests':{r:package_digest(paths[r]) for r in roles},
+        'hybrid':a.hybrid,'static_resources':static_resources,
+        'bundle_size_note':'Hybrid benchmark duplicates dynamic and fixed encoder weights; not a production packaging decision.',
         'scope':'Resampled mono PCM -> app frontend -> palette6 encoders -> palette6 head -> fixed supplied Apple sections; no Apple boundary detection or audio decoding on phone.',
-        'shape_policy':'Original variable lengths, CPU_ONLY; no zero padding or GPU dynamic-shape calls.'})
+        'shape_policy':('Static ALL for full 30/120s encoder windows; CPU_ONLY for exact-length tails, frontend and head.' if a.hybrid else 'Original variable lengths, CPU_ONLY; no zero padding or GPU dynamic-shape calls.')})
     template=Path(__file__).parent/'iphone_pipeline'
     for name in ('BenchmarkApp.swift','BenchmarkRunner.swift'):shutil.copyfile(template/name,out/name)
     project=out/'Benchmark.xcodeproj';project.mkdir()
     (project/'project.pbxproj').write_text(project_text('com.danendra.SongPipelineBenchmark',a.team_id,
-        resource_names=[r+'.mlmodelc' for r in roles]+['audio.f32','benchmark_manifest.json']))
+        resource_names=[r+'.mlmodelc' for r in roles]+[r+'.mlmodelc' for r in static_resources]+['audio.f32','benchmark_manifest.json']))
     print('Open:',project)
 
 

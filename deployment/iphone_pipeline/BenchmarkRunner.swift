@@ -23,6 +23,8 @@ actor BenchmarkRunner {
         let source_validation_sha256: String
         let scope: String
         let shape_policy: String
+        let hybrid: Bool?
+        let static_resources: [String: String]?
     }
     func failure(_ message: String) -> NSError {
         NSError(domain: "PipelineBenchmark", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -57,6 +59,7 @@ actor BenchmarkRunner {
         guard let url = bundle.url(forResource: "benchmark_manifest", withExtension: "json"),
               let audioURL = bundle.url(forResource: "audio", withExtension: "f32") else { throw failure("Missing resources") }
         let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))
+        let hybrid = m.hybrid ?? false
         let data = try Data(contentsOf: audioURL)
         guard data.count == m.audio_samples * 4 else { throw failure("PCM size mismatch") }
         let audio: [Float] = data.withUnsafeBytes { bytes in
@@ -73,7 +76,11 @@ actor BenchmarkRunner {
         let loadStart = ProcessInfo.processInfo.systemUptime
         let config = MLModelConfiguration(); config.computeUnits = .cpuOnly
         var models: [String: MLModel] = [:]
+        var activeEncoderResource: [String: String] = [:]
+        var encoderLoadSeconds = 0.0
+        var encoderLoadEvents = [[String: Any]]()
         for role in ["log_mel","musicfm_conv","musicfm","muq_conv","muq","head"] {
+            if hybrid && (role == "musicfm" || role == "muq") { continue }
             guard let path = bundle.url(forResource: role, withExtension: "mlmodelc") else { throw failure("Missing \(role)") }
             emit("LOAD_START: \(role)")
             models[role] = try MLModel(contentsOf: path, configuration: config)
@@ -96,6 +103,34 @@ actor BenchmarkRunner {
             return output
         }
         func first(_ role: String) -> String { models[role]!.modelDescription.inputDescriptionsByName.keys.sorted().first! }
+        func selectEncoder(_ role: String, _ frames: Int, _ samples: Int, _ seconds: Int) throws -> String {
+            if !hybrid { return "cpuOnly_dynamic" }
+            let expected = seconds == 30 ? 750 : 3000
+            let useStatic = (seconds == 30 || seconds == 120) && samples == seconds*24000 && frames == expected
+            let key = "\(role)_\(frames)"
+            let resource: String
+            if useStatic {
+                guard let bundled = m.static_resources?[key] else { throw failure("Missing static resource \(key)") }
+                resource = bundled
+            } else { resource = role }
+            if activeEncoderResource[role] != resource {
+                // Keep one active encoder model per role instead of all shapes at once.
+                models.removeValue(forKey: role)
+                guard let path = bundle.url(forResource: resource, withExtension: "mlmodelc") else { throw failure("Missing \(resource)") }
+                let route = useStatic ? "all_static" : "cpuOnly_dynamic_tail"
+                emit("ENCODER_LOAD_START: \(resource), \(route)")
+                let started = ProcessInfo.processInfo.systemUptime
+                let cfg = MLModelConfiguration(); cfg.computeUnits = useStatic ? .all : .cpuOnly
+                models[role] = try MLModel(contentsOf: path, configuration: cfg)
+                let elapsed = ProcessInfo.processInfo.systemUptime - started
+                encoderLoadSeconds += elapsed
+                encoderLoadEvents.append(["role":role,"resource":resource,"route":route,"seconds":elapsed])
+                activeEncoderResource[role] = resource
+                emit("ENCODER_LOAD_DONE: \(resource), \(elapsed)s")
+                if let b = footprint() { snapshots.append(b) }
+            }
+            return useStatic ? "all_static" : "cpuOnly_dynamic_tail"
+        }
         var windows: [[String: Any]] = []
         func pair(_ audio: [Float], _ offset: Int, _ seconds: Int) throws -> [[Float]] {
             emit("WINDOW: start=\(Double(offset)/24000)s, length=\(Double(audio.count)/24000)s, stream=\(seconds)s")
@@ -125,10 +160,12 @@ actor BenchmarkRunner {
                         rotary[frames*64+t*64+c] = sin(angle)
                     }
                 }
+                let route = try selectEncoder(role, frames, n, seconds)
+                emit("ROUTE: \(role), \(frames) frames, \(route)")
                 let output = try predict(role, ["conv_in": conv,"rotary": input(rotary,[2,frames,1,1,64])])
                 guard output.shape.map({$0.intValue}) == shape else { throw failure("Encoder shape mismatch") }
                 results.append(try floats(output))
-                windows.append(["encoder":role,"start_sample":offset,"samples":n,"stream_seconds":seconds,"frames":frames])
+                windows.append(["encoder":role,"start_sample":offset,"samples":n,"stream_seconds":seconds,"frames":frames,"route":route])
             }
             return results
         }
@@ -200,13 +237,15 @@ actor BenchmarkRunner {
         var system = utsname();uname(&system)
         let machine = withUnsafePointer(to: &system.machine) { ptr in ptr.withMemoryRebound(to: CChar.self,capacity: 1) { String(cString:$0) } }
         let report: [String: Any] = ["track_id":m.track_id,"hardware_identifier":machine,
-            "os":ProcessInfo.processInfo.operatingSystemVersionString,"requested_compute_units":"cpuOnly",
+            "os":ProcessInfo.processInfo.operatingSystemVersionString,"requested_compute_units":hybrid ? "hybrid_all_static_cpu_tail" : "cpuOnly",
+            "encoder_model_load_seconds_during_pipeline":encoderLoadSeconds,"encoder_load_events":encoderLoadEvents,
+            "total_load_and_pcm_pipeline_seconds":loadSeconds+inferenceSeconds,
             "model_load_seconds":loadSeconds,"pcm_pipeline_seconds":inferenceSeconds,
             "audio_seconds":Double(audio.count)/Double(m.sample_rate),"prediction_seconds_by_component":timings,
             "calls_by_component":calls,"sections":sections,"section_accuracy":Double(correct)/Double(sections.count),
             "section_agreement_with_mac":Double(agreement)/Double(sections.count),"max_section_probability_error":maxProbabilityError,
             "low_coverage_sections":lowCoverage,"encoder_windows":windows,"all_predictions_finite":true,
-            "process_footprint_snapshots_bytes":snapshots,"memory_note":"Snapshots, not peak memory; CPU process includes all six loaded models.",
+            "process_footprint_snapshots_bytes":snapshots,"memory_note":"Snapshots, not peak memory; Process keeps frontend/head and one active model per encoder role; snapshots are not peak memory.",
             "thermal_before":thermalBefore,"thermal_after":ProcessInfo.processInfo.thermalState.rawValue,"low_power_mode":lowPower,
             "source_validation_sha256":m.source_validation_sha256,"scope":m.scope,"shape_policy":m.shape_policy,
             "ready_for_app_integration":false]
