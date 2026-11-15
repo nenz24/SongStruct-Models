@@ -356,3 +356,23 @@ packages, encoder caches and accuracy reports are unchanged. Static copies
 duplicate weights in the benchmark bundle, so this is not the final app packaging.
 Regenerate in a new output folder via notebook setup then Part B; no need to rerun
 Part A, training, compression, or encoder feature extraction.
+
+### Coremltools 8.3 materializer precision regression
+
+A real 8.3.0 MIL conversion regression test reproduces the public shape utility
+introducing FLOAT16 declarations into an originally FLOAT32 compressed model.
+The adapter now loads a fresh MIL program using the same 8.3 MIL-proto reader
+used by the utility, adds the fixed-shape pass, removes fp16/int16 cast passes,
+and invokes `ct.convert(..., compute_precision=FLOAT32)` explicitly. It does not
+modify global pass registries or relax any dtype/numerical/compression checks.
+Coremltools is pinned to 8.3.0 because this reader is an internal, version-specific
+interface; a missing interface fails clearly instead of silently falling back.
+
+The optional real conversion test exercises both INT8 weights and 6-bit LUT
+weights, round-trips saved packages, materializes two shapes, and asserts no
+FLOAT16 plus retained compressed-weight ops. It runs on Linux without native
+prediction; that proves graph conversion only, not MusicFM numerical parity,
+macOS runtime behavior or the iPhone GPU fix. Those still run in preparation/device
+steps. If preparation previously failed on added FLOAT16, regenerate via setup
+then notebook Part B in a new folder. Existing compressed models/caches remain
+usable, and no weight compression or encoder extraction needs repeating.

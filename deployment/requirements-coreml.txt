@@ -1,3 +1,4 @@
 # Install in existing Python 3.11 SongFormer environment on macOS.
 # PyTorch remains at the version used for fine-tuning.
-coremltools>=8.3,<9
+# The MIL-proto materialization adapter is regression-tested against this version.
+coremltools==8.3.0

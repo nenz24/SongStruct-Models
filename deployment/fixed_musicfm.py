@@ -29,6 +29,28 @@ def assert_fixed_inputs(spec,frames):
         raise ValueError(f'Fixed input contract differs: {observed} vs {expected}')
 
 
+def materialize_fp32_model(ct,source_model,frames):
+    """Explicit FLOAT32 conversion; the 8.3 public utility defaults back to FP16."""
+    try:
+        # Same MIL-proto reader used by coremltools' materialization utility.
+        from coremltools.converters.mil.frontend.milproto.load import load as load_program
+    except ImportError as exc:
+        raise RuntimeError('This adapter requires coremltools 8.3.x MIL-proto loader.') from exc
+    spec=source_model.get_spec()
+    program=load_program(spec,spec.specificationVersion,source_model.weights_dir)
+    program.export_as_multifunction=False
+    pipeline=ct.PassPipeline.DEFAULT
+    pipeline.insert_pass(0,'common::materialize_symbolic_shape_program')
+    pipeline.set_options('common::materialize_symbolic_shape_program',{
+        'function_name_to_materialization_map':{'main':fixed_shapes(frames)},
+        'source_function_name':'main'})
+    pipeline.remove_passes({'common::add_fp16_cast','common::add_int16_cast'})
+    return ct.convert(program,source='milinternal',convert_to='mlprogram',
+        compute_precision=ct.precision.FLOAT32,
+        minimum_deployment_target=ct.target(spec.specificationVersion),
+        compute_units=ct.ComputeUnit.CPU_ONLY,skip_model_load=True,pass_pipeline=pipeline)
+
+
 def materialize_package(ct,source,frames,destination,inputs):
     destination=Path(destination)
     if destination.exists():
@@ -45,8 +67,8 @@ def materialize_package(ct,source,frames,destination,inputs):
         raise ValueError('Dynamic source is invalid on CPU for this fixture.')
     with tempfile.TemporaryDirectory() as folder:
         intermediate=Path(folder)/'materialized.mlpackage'
-        ct.models.utils.materialize_dynamic_shape_mlmodel(original,
-            {'main':expected},str(intermediate),source_function_name='main')
+        prepared=materialize_fp32_model(ct,original,frames)
+        prepared.save(str(intermediate))
         fixed=ct.models.MLModel(str(intermediate),compute_units=ct.ComputeUnit.CPU_ONLY)
         assert_fixed_inputs(fixed.get_spec(),frames)
         actual=np.asarray(fixed.predict({k:native_input(v) for k,v in inputs.items()})['embedding'])

@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 import numpy as np
 from deployment.fixed_musicfm import fixed_shapes, assert_fixed_inputs, materialize_package
 
@@ -43,13 +44,13 @@ class StaticMusicFMTests(unittest.TestCase):
                 return {'embedding':np.ones((1,inputs['conv_in'].shape[1],1024),np.float32)}
             def save(self,path):
                 Path(path).mkdir()
-        def materialize(model,mapping,path,**kwargs):
-            self.assertEqual(set(mapping),{'main'})
+        def materialize(api,model,frames):
+            mapping={'main':fixed_shapes(frames)}
             materializations.append(mapping)
-            Path(path).mkdir()
+            return NS(save=lambda path:Path(path).mkdir())
         ct=NS(models=NS(MLModel=Model,utils=NS(materialize_dynamic_shape_mlmodel=materialize)),
               ComputeUnit=NS(CPU_ONLY='cpu'))
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch('deployment.fixed_musicfm.materialize_fp32_model',side_effect=materialize):
             for frames in (750,2977):
                 result=materialize_package(ct,'original.mlpackage',frames,Path(folder)/f'{frames}.mlpackage',
                     {'conv_in':np.ones((1,frames,1024),np.float32),
