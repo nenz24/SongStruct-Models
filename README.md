@@ -95,3 +95,8 @@ python3 -m finetuning.prepare
 ```
 
 Periksa outputs.local/finetuning/group_map.csv sebelum mengonfirmasi kelompok. Ekstraksi cache bisa ditunda dan membutuhkan ruang disk tambahan; pelabelan lama belum menyimpan fitur ini. Training model penuh belum dijalankan pada dataset pengguna. Pengujian CPU mencakup data/split, gradient dan freeze, loop training sintetis, serta checkpoint EMA round-trip.
+
+
+## Integrasi ke app SongMap
+
+Percobaan untuk membawa model ini ke iPhone (konteks section, kompresi dan bank encoder, ablasi encoder, pipeline MuQ-only, probe iPhone, audit batas MusicUnderstanding) beserta hasil dan keputusannya didokumentasikan di [songmap-integration/README.md](songmap-integration/README.md).

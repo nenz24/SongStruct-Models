@@ -1,0 +1,395 @@
+{
+  "decisions": [
+    {
+      "section_index": 1,
+      "start": 0.11678004535147392,
+      "end": 19.551383219954648,
+      "original_label": "intro",
+      "candidate_label": "intro",
+      "matched_role": null,
+      "strong_match_coverage": 0.0,
+      "original_model_probability": 0.977148175239563,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 2,
+      "start": 19.551383219954648,
+      "end": 58.459863945578235,
+      "original_label": "verse",
+      "candidate_label": "verse",
+      "matched_role": "verse",
+      "strong_match_coverage": 0.17425506916632078,
+      "original_model_probability": 0.9517126083374023,
+      "status": "keep_already_consistent",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 3,
+      "start": 58.459863945578235,
+      "end": 77.9121768707483,
+      "original_label": "inst",
+      "candidate_label": "inst",
+      "matched_role": null,
+      "strong_match_coverage": 0.0,
+      "original_model_probability": 0.4888095259666443,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 4,
+      "start": 77.9121768707483,
+      "end": 97.38176870748299,
+      "original_label": "verse",
+      "candidate_label": "verse",
+      "matched_role": "verse",
+      "strong_match_coverage": 0.4010265440963233,
+      "original_model_probability": 0.9207440614700317,
+      "status": "keep_already_consistent",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 5,
+      "start": 97.38176870748299,
+      "end": 116.83761904761904,
+      "original_label": "verse",
+      "candidate_label": "verse",
+      "matched_role": null,
+      "strong_match_coverage": 0.0,
+      "original_model_probability": 0.8286208510398865,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 6,
+      "start": 116.83761904761904,
+      "end": 155.75997732426305,
+      "original_label": "chorus",
+      "candidate_label": "chorus",
+      "matched_role": "chorus",
+      "strong_match_coverage": 0.513843479314596,
+      "original_model_probability": 0.8618699908256531,
+      "status": "keep_already_consistent",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 7,
+      "start": 155.75997732426305,
+      "end": 165.4709297052154,
+      "original_label": "inst",
+      "candidate_label": "inst",
+      "matched_role": "chorus",
+      "strong_match_coverage": 0.3327098701001528,
+      "original_model_probability": 0.698471188545227,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 8,
+      "start": 165.4709297052154,
+      "end": 175.21693877551022,
+      "original_label": "inst",
+      "candidate_label": "inst",
+      "matched_role": "chorus",
+      "strong_match_coverage": 0.2102471155121362,
+      "original_model_probability": 0.40080609917640686,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 9,
+      "start": 175.21693877551022,
+      "end": 194.67931972789117,
+      "original_label": "bridge",
+      "candidate_label": "bridge",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.09245116166894532,
+      "original_model_probability": 0.7833402156829834,
+      "status": "keep_already_consistent",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 10,
+      "start": 194.67931972789117,
+      "end": 214.1366439909297,
+      "original_label": "bridge",
+      "candidate_label": "bridge",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.6895770498375409,
+      "original_model_probability": 0.6960067749023438,
+      "status": "keep_already_consistent",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 11,
+      "start": 214.1366439909297,
+      "end": 233.59943310657596,
+      "original_label": "chorus",
+      "candidate_label": "chorus",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.9712271454685913,
+      "original_model_probability": 0.8373757004737854,
+      "status": "keep_insufficient_independent_repetitions",
+      "support": [
+        {
+          "anchor_section": 10,
+          "anchor_model_probability": 0.6960067749023438,
+          "reference_id": "bridge",
+          "reference_phrase": "Like a mighty storm Stir within my soul",
+          "anchor_occurrence": [
+            192.88,
+            202.54
+          ],
+          "target_occurrence": [
+            231.24,
+            241.6
+          ]
+        }
+      ],
+      "unique_repeated_phrases": 1
+    },
+    {
+      "section_index": 12,
+      "start": 233.59943310657596,
+      "end": 253.06294784580498,
+      "original_label": "chorus",
+      "candidate_label": "chorus",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.799473635769467,
+      "original_model_probability": 0.7262983918190002,
+      "status": "keep_insufficient_independent_repetitions",
+      "support": [
+        {
+          "anchor_section": 10,
+          "anchor_model_probability": 0.6960067749023438,
+          "reference_id": "bridge",
+          "reference_phrase": "Like a mighty storm Stir within my soul",
+          "anchor_occurrence": [
+            192.88,
+            202.54
+          ],
+          "target_occurrence": [
+            231.24,
+            241.6
+          ]
+        }
+      ],
+      "unique_repeated_phrases": 1
+    },
+    {
+      "section_index": 13,
+      "start": 253.06294784580498,
+      "end": 272.5193424036281,
+      "original_label": "inst",
+      "candidate_label": "inst",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.09453665211001472,
+      "original_model_probability": 0.6800406575202942,
+      "status": "keep_outside_bridge_chorus_pair",
+      "support": [],
+      "unique_repeated_phrases": 0
+    },
+    {
+      "section_index": 14,
+      "start": 272.5193424036281,
+      "end": 292.7695918367347,
+      "original_label": "chorus",
+      "candidate_label": "bridge",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.9022234266031821,
+      "original_model_probability": 0.7521687150001526,
+      "status": "candidate_label_change",
+      "support": [
+        {
+          "anchor_section": 10,
+          "anchor_model_probability": 0.6960067749023438,
+          "reference_id": "bridge",
+          "reference_phrase": "Like a rushing wind Jesus breathe within",
+          "anchor_occurrence": [
+            208.58,
+            221.42000000000002
+          ],
+          "target_occurrence": [
+            270.68,
+            280.36
+          ]
+        },
+        {
+          "anchor_section": 10,
+          "anchor_model_probability": 0.6960067749023438,
+          "reference_id": "bridge",
+          "reference_phrase": "Like a mighty storm Stir within my soul",
+          "anchor_occurrence": [
+            192.88,
+            202.54
+          ],
+          "target_occurrence": [
+            291.54,
+            301.44
+          ]
+        }
+      ],
+      "unique_repeated_phrases": 2
+    },
+    {
+      "section_index": 15,
+      "start": 292.7695918367347,
+      "end": 314.6024489795918,
+      "original_label": "chorus",
+      "candidate_label": "chorus",
+      "matched_role": "bridge",
+      "strong_match_coverage": 0.39712659257251226,
+      "original_model_probability": 0.6043624877929688,
+      "status": "keep_mixed_or_partial_evidence",
+      "support": [],
+      "unique_repeated_phrases": 0
+    }
+  ],
+  "simulated_sections": [
+    {
+      "start": 0.11678004535147392,
+      "end": 19.551383219954648,
+      "label": "intro"
+    },
+    {
+      "start": 19.551383219954648,
+      "end": 58.459863945578235,
+      "label": "verse"
+    },
+    {
+      "start": 58.459863945578235,
+      "end": 77.9121768707483,
+      "label": "inst"
+    },
+    {
+      "start": 77.9121768707483,
+      "end": 97.38176870748299,
+      "label": "verse"
+    },
+    {
+      "start": 97.38176870748299,
+      "end": 116.83761904761904,
+      "label": "verse"
+    },
+    {
+      "start": 116.83761904761904,
+      "end": 155.75997732426305,
+      "label": "chorus"
+    },
+    {
+      "start": 155.75997732426305,
+      "end": 165.4709297052154,
+      "label": "inst"
+    },
+    {
+      "start": 165.4709297052154,
+      "end": 175.21693877551022,
+      "label": "inst"
+    },
+    {
+      "start": 175.21693877551022,
+      "end": 194.67931972789117,
+      "label": "bridge"
+    },
+    {
+      "start": 194.67931972789117,
+      "end": 214.1366439909297,
+      "label": "bridge"
+    },
+    {
+      "start": 214.1366439909297,
+      "end": 233.59943310657596,
+      "label": "chorus"
+    },
+    {
+      "start": 233.59943310657596,
+      "end": 253.06294784580498,
+      "label": "chorus"
+    },
+    {
+      "start": 253.06294784580498,
+      "end": 272.5193424036281,
+      "label": "inst"
+    },
+    {
+      "start": 272.5193424036281,
+      "end": 292.7695918367347,
+      "label": "bridge"
+    },
+    {
+      "start": 292.7695918367347,
+      "end": 314.6024489795918,
+      "label": "chorus"
+    }
+  ],
+  "candidate_change_count": 1,
+  "original_anchor_sections": [
+    {
+      "section_index": 6,
+      "label": "chorus",
+      "model_probability": 0.8618699908256531
+    },
+    {
+      "section_index": 10,
+      "label": "bridge",
+      "model_probability": 0.6960067749023438
+    }
+  ],
+  "protocol": "lyric-label-experiment-v1",
+  "title": "I Surrender - Hillsong Worship",
+  "parameters": {
+    "target_coverage": 0.75,
+    "anchor_coverage": 0.3,
+    "anchor_probability": 0.6,
+    "strong_text_similarity": 0.85,
+    "strong_word_probability": 0.5,
+    "minimum_unique_repeated_phrases": 2,
+    "maximum_original_probability": 0.95,
+    "allowed_labels": [
+      "bridge",
+      "chorus"
+    ]
+  },
+  "audit_parameters": {
+    "minimum_phrase_words": 5,
+    "text_similarity": 0.72,
+    "minimum_word_probability": 0.2,
+    "maximum_word_gap_seconds": 4.0,
+    "minimum_overlap_seconds": 0.5,
+    "substantial_coverage": 0.5
+  },
+  "source": {
+    "audio_sha256": "df0ac2ffc67f9e9c2b02f54456f8aec26b94f492a0a6a7989af0112a3eb25b81",
+    "analysis_report_sha256": "12e9710dbfc07f066f7619dec2050e7ecf743558ad1daf4cf15bd0a20f590f46",
+    "scope": "Derived review input from the user-supplied report and locally transcribed MP3; no audio or device identifiers included.",
+    "audio_duration_seconds": 314.618776
+  },
+  "model_checkpoint_sha256": "1511a8c4c53b86a3c58508a4a7c2f890daa1adb926acbdb9dae56ad529d01e01",
+  "reference_source": "Official section roles and lyrics supplied by the user in this conversation; not inferred from audio.",
+  "boundaries_exactly_preserved": true,
+  "app_maps_changed": false,
+  "model_weights_changed": false,
+  "training_started": false,
+  "independent_accuracy_measured": false,
+  "ready_for_app_integration": false,
+  "limitations": [
+    "The supplied lyric reference provides roles; this is not a new audio-only SongFormer result.",
+    "ASR is automatic and may be wrong. Text/coverage/repetition thresholds are uncalibrated experimental defaults.",
+    "Only original model predictions can be anchors; candidates do not propagate or change probabilities.",
+    "Several partial/mixed sections deliberately remain unchanged, including instrumental overlaps and uncertain tails.",
+    "One illustrative recording informed development; there is no held-out accuracy or iPhone runtime claim.",
+    "Candidate changes are a separate local simulation, not applied app labels or new training annotations."
+  ],
+  "input_sha256": "9e05c10af45431a956e5df66595e9f9163486f816d114a419708748459846439",
+  "model_evidence_sha256": "584541e2469e1cc6320cae077c8d9578b4d98bdf08418b845c06868f848cafa4"
+}
